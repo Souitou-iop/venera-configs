@@ -5,12 +5,12 @@ class Baozi extends ComicSource {
   // 唯一标识符
   key = "baozi";
 
-  version = "1.1.6";
+  version = "1.1.7";
 
   minAppVersion = "1.0.0";
 
   // 更新链接
-  url = "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/baozi.js";
+  url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venerax-configs-enhanced@main/baozi.js";
 
   settings = {
     language: {
@@ -33,7 +33,7 @@ class Baozi extends ComicSource {
         { value: "twmanga.com" },
         { value: "dinnerku.com" },
       ],
-      default: "bzmgcn.com",
+      default: "baozimhcn.com",
     },
     cdn_domains: {
       title: "图片资源站域名",
@@ -44,6 +44,8 @@ class Baozi extends ComicSource {
         { value: "asgb-a3.bzcdn.net" },
         { value: "as.baozimh.com" },
         { value: "s1.baozicdn.com" },
+        { value: "s1.bzcdn.net" },
+        { value: "s2.bzcdn.net" },
         { value: "", text: "默认" },
       ],
       default: "",
@@ -487,25 +489,31 @@ class Baozi extends ComicSource {
     loadEp: async (comicId, epId) => {
       const images = [];
 
-      // App版链接
-      let currentPageUrl = `https://appcn.baozimh.com/baozimhapp/comic/chapter/${comicId}/0_${epId}.html`;
+      let currentPageUrl = `${this.baseUrl}/comic/chapter/${comicId}/0_${epId}.html`;
 
-      const res = await Network.get(currentPageUrl);
+      const res = await Network.get(currentPageUrl, {
+        Referer: `${this.baseUrl}/`,
+      });
       if (res.status !== 200) {
         throw `Invalid status code: ${res.status}`;
       }
 
       const doc = new HtmlDocument(res.body);
 
-      // 解析当前页图片(App 版)
-      const imageNodes = doc.querySelectorAll(".comic-contain > .chapter-img");
+      let imageNodes = doc.querySelectorAll(".comic-contain amp-img.comic-contain__item");
+      if (!imageNodes.length) {
+        imageNodes = doc.querySelectorAll(".comic-contain > .chapter-img");
+      }
       imageNodes.forEach((imgNode) => {
-        let imgUrl = imgNode.querySelector(".comic-contain__item")?.attributes?.["data-src"];
+        let imgUrl =
+          imgNode.attributes?.["data-src"] ||
+          imgNode.attributes?.src ||
+          imgNode.querySelector(".comic-contain__item")?.attributes?.["data-src"];
         if (imgUrl) {
           const match = imgUrl.match(/^(https?:\/\/)?([^/\s:]+)(:\d+)?(\/[a-z]comic\/.*)/);
           if (match) {
             const domain = this.loadSetting("cdn_domains") === "" ? match[2] : this.loadSetting("cdn_domains");
-            imgUrl = `${match[1]}${domain}${this.loadSetting("image_quality")}${match[4]}`;
+            imgUrl = `${match[1] || "https://"}${domain}${this.loadSetting("image_quality")}${match[4]}`;
           }
           images.push(imgUrl);
         }
