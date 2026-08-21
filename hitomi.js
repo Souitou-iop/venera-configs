@@ -33,6 +33,38 @@ const refererUrl = "https://hitomi.la/";
 let galleries_index_version = "";
 let gg = undefined;
 
+// ---- 性能优化: 缓存层 ----
+// 索引文件按版本不可变, 会话内节点/数据可安全缓存; 版本变化时统一失效
+const nodeCache = new Map(); // B-tree 节点缓存: "version:field:address" -> node
+const dataCache = new Map(); // .data 片段缓存: "version:offset:length" -> {galleryids, bytes} (LRU)
+const nozomiCache = new Map(); // nozomi 结果缓存: url -> {galleryids, bytes, time} (LRU+TTL)
+const galleryBlockCache = new Map(); // galleryblock 解析结果缓存: gid -> block (LRU)
+
+// 并发去重: 相同请求在途时只发一次
+const inflightNodes = new Map();
+const inflightData = new Map();
+const inflightNozomi = new Map();
+const inflightGalleryBlocks = new Map();
+let versionPromise = undefined;
+
+let dataCacheBytes = 0;
+let nozomiCacheBytes = 0;
+const DATA_CACHE_LIMIT = 16 * 1024 * 1024; // .data 缓存总量上限 16MB
+const NOZOMI_CACHE_LIMIT = 16 * 1024 * 1024; // nozomi 缓存原始字节上限 16MB
+const NOZOMI_CACHE_ENTRY_LIMIT = 8 * 1024 * 1024; // 单个 nozomi 最多缓存 8MB
+const NOZOMI_CACHE_TTL = 5 * 60 * 1000; // nozomi 缓存 5 分钟
+const GALLERY_BLOCK_CACHE_LIMIT = 500; // galleryblock 缓存条数
+let versionCacheTime = 0; // 版本号缓存时间戳
+const VERSION_CACHE_TTL = 5 * 60 * 1000; // 5 分钟内不重复请求版本号
+
+function clearIndexCaches() {
+  nodeCache.clear();
+  dataCache.clear();
+  dataCacheBytes = 0;
+  inflightNodes.clear();
+  inflightData.clear();
+}
+
 /**
  * 求交集
  * @param arrays
@@ -42,10 +74,15 @@ function intersectAll(arrays) {
   if (!arrays.length) return [];
   if (arrays.length === 1) return arrays[0];
 
-  return arrays.reduce((acc, curr) => {
-    const set = new Set(curr);
-    return acc.filter((x) => set.has(x));
-  });
+  // 保持第一个数组的元素顺序, 但按长度从小到大构建后续集合:
+  // 短列表先过滤, 能让大列表尽快缩小, 减少后续 Set 构建和过滤次数
+  const rest = arrays.slice(1).sort((a, b) => a.length - b.length);
+  let acc = arrays[0];
+  for (let i = 0; i < rest.length; i++) {
+    const set = new Set(rest[i]);
+    acc = acc.filter((x) => set.has(x));
+  }
+  return acc;
 }
 
 /**
@@ -65,7 +102,11 @@ function subtract(arrA, arrB) {
  * @returns 返回一个包含所有唯一元素的数组
  */
 function unionAll(arrays) {
-  return Array.from(new Set(arrays.flat()));
+  const set = new Set();
+  for (const arr of arrays) {
+    for (const x of arr) set.add(x);
+  }
+  return Array.from(set);
 }
 
 /**
@@ -125,6 +166,22 @@ function getUint64(view, byteOffset, littleEndian = false) {
   return combined;
 }
 
+/**
+ * 将 big-endian int32 字节流解码为普通数组。
+ * 预分配数组 + DataView 比逐元素 push 快约 2 倍。
+ */
+function decodeBigEndianInt32Array(data, byteOffset = 0, count) {
+  if (count === undefined) {
+    count = (data.byteLength - byteOffset) >> 2;
+  }
+  const out = new Array(count);
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  for (let i = 0; i < count; i++) {
+    out[i] = view.getInt32(byteOffset + i * 4, false /* big-endian */);
+  }
+  return out;
+}
+
 function decode_node(data) {
   let node = {
     keys: [],
@@ -132,7 +189,7 @@ function decode_node(data) {
     subnode_addresses: [],
   };
 
-  let view = new DataView(data.buffer);
+  let view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   let pos = 0;
 
   const number_of_keys = view.getInt32(pos, false /* big-endian */);
@@ -193,105 +250,165 @@ async function get_url_at_range(url, range) {
 async function get_node_at_address(field, address) {
   if (!galleries_index_version)
     throw new Error("galleries_index_version is not set");
-  const url =
-    "https://" +
-    domain +
-    "/" +
-    "galleriesindex/galleries." +
-    galleries_index_version +
-    ".index";
-  const data = await get_url_at_range(url, [
-    address,
-    address + max_node_size - 1,
-  ]);
-  return decode_node(data);
+  const cacheKey = galleries_index_version + ":" + field + ":" + address;
+  const cached = nodeCache.get(cacheKey);
+  if (cached) return cached;
+
+  // 同一节点并发请求只发一次 (多关键词同时搜索时常命中根节点/相同子树)
+  const inflight = inflightNodes.get(cacheKey);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    const requestVersion = galleries_index_version;
+    const url =
+      "https://" +
+      domain +
+      "/" +
+      "galleriesindex/galleries." +
+      requestVersion +
+      ".index";
+    const data = await get_url_at_range(url, [
+      address,
+      address + max_node_size - 1,
+    ]);
+    const node = decode_node(data);
+    // 版本若在请求期间发生变化, 不写入旧版本节点, 避免污染新版本缓存
+    if (node && galleries_index_version === requestVersion) {
+      nodeCache.set(cacheKey, node);
+    }
+    return node;
+  })();
+
+  inflightNodes.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightNodes.delete(cacheKey);
+  }
 }
 
 async function get_galleryids_from_data(data) {
-  let url =
-    "https://" +
-    domain +
-    "/" +
-    galleries_index_dir +
-    "/galleries." +
-    galleries_index_version +
-    ".data";
   let [offset, length] = data;
   if (length > 100000000 || length <= 0) {
     throw new Error("length " + length + " is too long");
   }
-  const inbuf = await get_url_at_range(url, [offset, offset + length - 1]);
-  let galleryids = [];
-
-  let pos = 0;
-  let view = new DataView(inbuf.buffer);
-  let number_of_galleryids = view.getInt32(pos, false /* big-endian */);
-  pos += 4;
-
-  let expected_length = number_of_galleryids * 4 + 4;
-
-  if (number_of_galleryids > 10000000 || number_of_galleryids <= 0) {
-    throw new Error(
-      "number_of_galleryids " + number_of_galleryids + " is too long"
-    );
-  } else if (inbuf.byteLength !== expected_length) {
-    throw new Error(
-      "inbuf.byteLength " +
-        inbuf.byteLength +
-        " !== expected_length " +
-        expected_length
-    );
+  const cacheKey = galleries_index_version + ":" + offset + ":" + length;
+  const cached = dataCache.get(cacheKey);
+  if (cached) {
+    // LRU touch: 移到末尾表示最近使用
+    dataCache.delete(cacheKey);
+    dataCache.set(cacheKey, cached);
+    return cached.galleryids;
   }
 
-  for (let i = 0; i < number_of_galleryids; ++i) {
-    galleryids.push(view.getInt32(pos, false /* big-endian */));
-    pos += 4;
-  }
+  // 同一 .data 片段并发请求只发一次
+  const inflight = inflightData.get(cacheKey);
+  if (inflight) return inflight;
 
-  return galleryids;
+  const promise = (async () => {
+    const requestVersion = galleries_index_version;
+    let url =
+      "https://" +
+      domain +
+      "/" +
+      galleries_index_dir +
+      "/galleries." +
+      requestVersion +
+      ".data";
+    const inbuf = await get_url_at_range(url, [offset, offset + length - 1]);
+
+    const view = new DataView(inbuf.buffer, inbuf.byteOffset, inbuf.byteLength);
+    const number_of_galleryids = view.getInt32(0, false /* big-endian */);
+    const expected_length = number_of_galleryids * 4 + 4;
+
+    if (number_of_galleryids > 10000000 || number_of_galleryids <= 0) {
+      throw new Error(
+        "number_of_galleryids " + number_of_galleryids + " is too long"
+      );
+    } else if (inbuf.byteLength !== expected_length) {
+      throw new Error(
+        "inbuf.byteLength " +
+          inbuf.byteLength +
+          " !== expected_length " +
+          expected_length
+      );
+    }
+
+    const galleryids = decodeBigEndianInt32Array(
+      inbuf,
+      4,
+      number_of_galleryids
+    );
+
+    // 写入缓存 (LRU, 只缓存 <4MB 的片段, 总量受限)
+    if (
+      length < 4 * 1024 * 1024 &&
+      galleries_index_version === requestVersion
+    ) {
+      const entry = { galleryids, bytes: length };
+      dataCache.set(cacheKey, entry);
+      dataCacheBytes += length;
+      while (dataCacheBytes > DATA_CACHE_LIMIT && dataCache.size > 1) {
+        const oldestKey = dataCache.keys().next().value;
+        const oldest = dataCache.get(oldestKey);
+        dataCacheBytes -= oldest.bytes;
+        dataCache.delete(oldestKey);
+      }
+    }
+
+    return galleryids;
+  })();
+
+  inflightData.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightData.delete(cacheKey);
+  }
+}
+
+function compare_arraybuffers(dv1, dv2) {
+  const top = Math.min(dv1.length, dv2.length);
+  for (let i = 0; i < top; i++) {
+    if (dv1[i] < dv2[i]) {
+      return -1;
+    } else if (dv1[i] > dv2[i]) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+function locate_key_in_node(key, node) {
+  let cmp_result = -1;
+  let i;
+  for (i = 0; i < node.keys.length; i++) {
+    cmp_result = compare_arraybuffers(key, node.keys[i]);
+    if (cmp_result <= 0) {
+      break;
+    }
+  }
+  return [!cmp_result, i];
+}
+
+function is_leaf_node(node) {
+  for (let i = 0; i < node.subnode_addresses.length; i++) {
+    if (node.subnode_addresses[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 async function B_search(field, key, node) {
-  const compare_arraybuffers = function (dv1, dv2) {
-    const top = Math.min(dv1.length, dv2.length);
-    for (let i = 0; i < top; i++) {
-      if (dv1[i] < dv2[i]) {
-        return -1;
-      } else if (dv1[i] > dv2[i]) {
-        return 1;
-      }
-    }
-    return 0;
-  };
-  const locate_key = function (key, node) {
-    let cmp_result = -1;
-    let i;
-    for (i = 0; i < node.keys.length; i++) {
-      cmp_result = compare_arraybuffers(key, node.keys[i]);
-      if (cmp_result <= 0) {
-        break;
-      }
-    }
-    return [!cmp_result, i];
-  };
-
-  const is_leaf = function (node) {
-    for (let i = 0; i < node.subnode_addresses.length; i++) {
-      if (node.subnode_addresses[i]) {
-        return false;
-      }
-    }
-    return true;
-  };
-
   if (!node || !node.keys.length) {
     return;
   }
 
-  let [there, where] = locate_key(key, node);
+  let [there, where] = locate_key_in_node(key, node);
   if (there) {
     return node.datas[where];
-  } else if (is_leaf(node)) {
+  } else if (is_leaf_node(node)) {
     return;
   }
 
@@ -309,6 +426,9 @@ async function B_search(field, key, node) {
 }
 
 async function get_galleryids_for_query_without_namespace(query) {
+  // 只有无 namespace 的 B-tree 搜索才依赖索引版本; 首次搜索前确保版本已就绪
+  await update_galleries_index_version();
+
   query = query.replace(/_/g, " ");
 
   const key = hash_term(query);
@@ -318,7 +438,18 @@ async function get_galleryids_for_query_without_namespace(query) {
 
   const data = await B_search(field, key, node);
   if (!data) {
-    return [];
+    // 未命中: 可能是索引已更新而版本号缓存过期, 强制刷新版本后重试一次
+    const oldVersion = galleries_index_version;
+    await update_galleries_index_version(true);
+    if (galleries_index_version === oldVersion) {
+      return []; // 版本没变, 该词确实不在索引中
+    }
+    const node2 = await get_node_at_address(field, 0);
+    const data2 = await B_search(field, key, node2);
+    if (!data2) {
+      return [];
+    }
+    return await get_galleryids_from_data(data2);
   } else {
     return await get_galleryids_from_data(data);
   }
@@ -386,14 +517,63 @@ function nozomi_address_from_state(state, with_prefix) {
  */
 async function get_galleryids_from_state(state) {
   const url = nozomi_address_from_state(state, true);
-  const data = await get_url_at_range(url);
-  var nozomi = [];
-  var view = new DataView(data.buffer);
-  var total = view.byteLength / 4;
-  for (var i = 0; i < total; i++) {
-    nozomi.push(view.getInt32(i * 4, false /* big-endian */));
+
+  // 并发时相同 nozomi 只请求一次
+  const inflight = inflightNozomi.get(url);
+  if (inflight) return inflight;
+
+  const now = Date.now();
+  const cached = nozomiCache.get(url);
+  if (cached) {
+    if (now - cached.time < NOZOMI_CACHE_TTL) {
+      // LRU touch
+      nozomiCache.delete(url);
+      nozomiCache.set(url, cached);
+      return cached.galleryids;
+    }
+    // 过期删除
+    nozomiCacheBytes -= cached.bytes;
+    nozomiCache.delete(url);
   }
-  return nozomi;
+
+  const promise = (async () => {
+    const data = await get_url_at_range(url);
+    const galleryids = decodeBigEndianInt32Array(data);
+
+    // 只缓存大小受控的 nozomi, 避免超大结果占满移动端内存
+    if (
+      data.byteLength > 0 &&
+      data.byteLength <= NOZOMI_CACHE_ENTRY_LIMIT
+    ) {
+      while (
+        nozomiCacheBytes + data.byteLength > NOZOMI_CACHE_LIMIT &&
+        nozomiCache.size > 0
+      ) {
+        const oldestKey = nozomiCache.keys().next().value;
+        const oldest = nozomiCache.get(oldestKey);
+        nozomiCacheBytes -= oldest.bytes;
+        nozomiCache.delete(oldestKey);
+      }
+      if (data.byteLength <= NOZOMI_CACHE_LIMIT) {
+        const entry = {
+          galleryids,
+          bytes: data.byteLength,
+          time: Date.now(),
+        };
+        nozomiCache.set(url, entry);
+        nozomiCacheBytes += data.byteLength;
+      }
+    }
+
+    return galleryids;
+  })();
+
+  inflightNozomi.set(url, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightNozomi.delete(url);
+  }
 }
 
 async function get_galleryids_and_count({ range, state }) {
@@ -416,21 +596,45 @@ async function get_galleryids_and_count({ range, state }) {
   }
 
   const arrayBuffer = resp.body;
-  const nozomi = [];
-  if (arrayBuffer) {
-    const view = new DataView(arrayBuffer);
-    const total = view.byteLength / 4;
-    for (let i = 0; i < total; i++) {
-      nozomi.push(view.getInt32(i * 4, false /* big-endian */));
-    }
-  }
-  return { galleryids: nozomi, count: itemCount };
+  const bytes = arrayBuffer ? new Uint8Array(arrayBuffer) : new Uint8Array(0);
+  return { galleryids: decodeBigEndianInt32Array(bytes), count: itemCount };
 }
 
 async function get_single_galleryblock(gid) {
-  const url = "https://" + domain + "/" + `galleryblock/${gid}.html`;
-  const res = await Network.get(url, { referer: refererUrl });
-  return parseGalleryBlockInfo(res.body);
+  const cacheKey = String(gid);
+  const cached = galleryBlockCache.get(cacheKey);
+  if (cached) {
+    // LRU touch: 列表翻页/相关推荐经常重复命中
+    galleryBlockCache.delete(cacheKey);
+    galleryBlockCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  // 同一 galleryblock 并发请求只发一次
+  const inflight = inflightGalleryBlocks.get(cacheKey);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    const url = "https://" + domain + "/" + `galleryblock/${gid}.html`;
+    const res = await Network.get(url, { referer: refererUrl });
+    if (res.status !== 200) {
+      throw new Error("galleryblock " + gid + ": " + res.status);
+    }
+    const block = parseGalleryBlockInfo(res.body);
+    galleryBlockCache.set(cacheKey, block);
+    while (galleryBlockCache.size > GALLERY_BLOCK_CACHE_LIMIT) {
+      const oldestKey = galleryBlockCache.keys().next().value;
+      galleryBlockCache.delete(oldestKey);
+    }
+    return block;
+  })();
+
+  inflightGalleryBlocks.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightGalleryBlocks.delete(cacheKey);
+  }
 }
 
 async function get_galleryblocks(gids) {
@@ -454,23 +658,48 @@ async function get_index_version(name = "galleriesindex") {
   }
 }
 
-async function update_galleries_index_version() {
-  galleries_index_version = await get_index_version();
+async function update_galleries_index_version(force = false) {
+  const now = Date.now();
+  if (!force && versionCacheTime && now - versionCacheTime < VERSION_CACHE_TTL) {
+    return; // 版本号缓存有效, 跳过网络请求
+  }
+  // 多个无 namespace 关键词并发搜索时, 版本请求也只发一次
+  if (versionPromise) return versionPromise;
+
+  versionPromise = (async () => {
+    const newVersion = await get_index_version();
+    if (newVersion !== galleries_index_version) {
+      galleries_index_version = newVersion;
+      clearIndexCaches(); // 索引版本变化, 缓存全部失效
+    }
+    versionCacheTime = Date.now();
+  })();
+
+  try {
+    return await versionPromise;
+  } finally {
+    versionPromise = undefined;
+  }
 }
 
 async function get_image_srcs(files) {
-  const resp = await Network.get(
-    "https://" + domain + "/" + "gg.js?_=" + new Date().getTime(),
-    {
-      referer: refererUrl,
+  if (!gg) {
+    const resp = await Network.get(
+      "https://" + domain + "/gg.js",
+      {
+        referer: refererUrl,
+      }
+    );
+    if (resp.status >= 400) {
+      throw new Error(resp.status);
     }
-  );
-  if (resp.status >= 400) {
-    throw new Error(resp.status);
+    gg = undefined; // eval 失败时保证下次可重试
+    eval(resp.body);
+    if (!gg || !gg.b) {
+      gg = undefined;
+      throw new Error();
+    }
   }
-
-  eval(resp.body);
-  if (!gg.b) throw new Error();
 
   const subdomain_from_url = (url, base, dir) => {
     var retval = "";
@@ -709,14 +938,25 @@ async function multiTagSearch(options) {
   const lp = parsed.positive_terms.length;
   const ln = parsed.negative_terms.length;
   let r = intersectAll(result.slice(0, lp));
-  for (let i = lp; i < lp + ln; i++) {
-    r = subtract(r, result[i]);
+
+  // 所有排除项合并后一次差集, 避免对大结果反复过滤
+  if (ln > 0) {
+    r = subtract(r, unionAll(result.slice(lp, lp + ln)));
   }
+
+  // OR 组按“原始结果总大小”从小到大合并求交, 短集合先过滤, 减少重复过滤
   let i = lp + ln;
+  const orGroups = [];
   for (const or_term of parsed.or_terms) {
-    const length = or_term.length;
-    r = intersectAll([r, unionAll(result.slice(i, i + length))]);
-    i += length;
+    const group = result.slice(i, i + or_term.length);
+    let totalLength = 0;
+    for (const arr of group) totalLength += arr.length;
+    orGroups.push({ group, totalLength });
+    i += or_term.length;
+  }
+  orGroups.sort((a, b) => a.totalLength - b.totalLength);
+  for (const { group } of orGroups) {
+    r = intersectAll([r, unionAll(group)]);
   }
 
   return r;
@@ -786,7 +1026,6 @@ async function search(options) {
       state,
     };
   } else {
-    await update_galleries_index_version();
     const gids = await multiTagSearch(options);
     const rgids =
       options.orderbydirection === "random"
@@ -805,95 +1044,100 @@ async function search(options) {
 function parseGalleryBlockInfo(body) {
   const mangaEl = new HtmlDocument(body);
 
-  // 标题和详情页链接
-  const titleLink = mangaEl.querySelector("h1.lillie > a");
-  const gid = /-(\d+)\.html$/.exec(titleLink.attributes["href"]).at(1);
-  const title = titleLink.text;
+  try {
+    // 标题和详情页链接
+    const titleLink = mangaEl.querySelector("h1.lillie > a");
+    const gid = /-(\d+)\.html$/.exec(titleLink.attributes["href"]).at(1);
+    const title = titleLink.text;
 
-  // 封面图URL
-  const thumbnail_hashs = [];
-  const srcs = Array.from(mangaEl.querySelectorAll("img")).map((a) =>
-    a.attributes["data-src"].trim()
-  );
-  srcs.forEach((src) => {
-    const r = /\/(\w{64})\./.exec(src);
-    if (r) {
-      const hash = r[1];
-      thumbnail_hashs.push(hash);
-    }
-  });
-
-  // 作者列表
-  const artists = Array.from(mangaEl.querySelectorAll(".artist-list li a")).map(
-    (a) => a.text.trim()
-  );
-
-  let language = undefined;
-  let series = [];
-  let type = undefined;
-  // 描述表格：Series / Type / Language
-  const rows = mangaEl.querySelectorAll(".dj-desc tr");
-  rows.forEach((row) => {
-    const key = row.children[0].text.trim().toLowerCase();
-    const valueCell = row.children[1];
-    switch (key) {
-      case "series": {
-        const text = valueCell.text.trim();
-        if (text !== "N/A") {
-          const as = valueCell.querySelectorAll("a");
-          as.forEach((a) => series.push(a.text.trim()));
-        }
-        break;
+    // 封面图URL
+    const thumbnail_hashs = [];
+    const srcs = Array.from(mangaEl.querySelectorAll("img")).map((a) =>
+      a.attributes["data-src"].trim()
+    );
+    srcs.forEach((src) => {
+      const r = /\/(\w{64})\./.exec(src);
+      if (r) {
+        const hash = r[1];
+        thumbnail_hashs.push(hash);
       }
-      case "type": {
-        type = valueCell.text.trim();
-        break;
-      }
-      case "language": {
-        if (valueCell.querySelector("a")) {
-          const href = valueCell.querySelector("a").attributes["href"];
-          const r = /\/index-(\w+)\.html/.exec(href);
-          if (r) {
-            language = r[1];
+    });
+
+    // 作者列表
+    const artists = Array.from(
+      mangaEl.querySelectorAll(".artist-list li a")
+    ).map((a) => a.text.trim());
+
+    let language = undefined;
+    let series = [];
+    let type = undefined;
+    // 描述表格：Series / Type / Language
+    const rows = mangaEl.querySelectorAll(".dj-desc tr");
+    rows.forEach((row) => {
+      const key = row.children[0].text.trim().toLowerCase();
+      const valueCell = row.children[1];
+      switch (key) {
+        case "series": {
+          const text = valueCell.text.trim();
+          if (text !== "N/A") {
+            const as = valueCell.querySelectorAll("a");
+            as.forEach((a) => series.push(a.text.trim()));
           }
+          break;
         }
-        break;
+        case "type": {
+          type = valueCell.text.trim();
+          break;
+        }
+        case "language": {
+          if (valueCell.querySelector("a")) {
+            const href = valueCell.querySelector("a").attributes["href"];
+            const r = /\/index-(\w+)\.html/.exec(href);
+            if (r) {
+              language = r[1];
+            }
+          }
+          break;
+        }
       }
-    }
-  });
+    });
 
-  // 标签列表
-  const females = [];
-  const males = [];
-  const others = [];
-  Array.from(mangaEl.querySelectorAll(".relatedtags li a")).map((a) => {
-    const text = a.text.trim();
-    if (text.endsWith(" ♀")) {
-      females.push(text.slice(0, -2));
-    } else if (text.endsWith(" ♂")) {
-      males.push(text.slice(0, -2));
-    } else {
-      others.push(text);
-    }
-  });
+    // 标签列表
+    const females = [];
+    const males = [];
+    const others = [];
+    Array.from(mangaEl.querySelectorAll(".relatedtags li a")).map((a) => {
+      const text = a.text.trim();
+      if (text.endsWith(" ♀")) {
+        females.push(text.slice(0, -2));
+      } else if (text.endsWith(" ♂")) {
+        males.push(text.slice(0, -2));
+      } else {
+        others.push(text);
+      }
+    });
 
-  // 发布日期（原始字符串）
-  const postedRaw = mangaEl.querySelector(".date").text.trim();
-  const posted_time = new Date(toISO8601(postedRaw));
+    // 发布日期（原始字符串）
+    const postedRaw = mangaEl.querySelector(".date").text.trim();
+    const posted_time = new Date(toISO8601(postedRaw));
 
-  return {
-    gid,
-    title,
-    type,
-    language,
-    artists,
-    series,
-    females,
-    males,
-    others,
-    thumbnail_hashs,
-    posted_time,
-  };
+    return {
+      gid,
+      title,
+      type,
+      language,
+      artists,
+      series,
+      females,
+      males,
+      others,
+      thumbnail_hashs,
+      posted_time,
+    };
+  } finally {
+    // 及时释放 HtmlDocument, 避免连续翻页时原生解析器内存堆积导致变慢
+    mangaEl.dispose();
+  }
 }
 
 function parseGalleryDetail(text) {
@@ -995,12 +1239,12 @@ class Hitomi extends ComicSource {
   // unique id of the source
   key = "hitomi";
 
-  version = "1.1.2";
+  version = "1.2.2";
 
   minAppVersion = "1.4.6";
 
   // update url
-  url = "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/hitomi.js";
+  url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venera-configs@main/hitomi.js";
 
   galleryCache = [];
   categoryResultCache = undefined;
@@ -1476,11 +1720,16 @@ class Hitomi extends ComicSource {
 
       this.galleryCache = data;
 
+      // 一个 gallery 即单个章节，files 即该章节的全部图片
+      const chapters = new Map();
+      chapters.set("1", data.title || "Gallery");
+
       return new ComicDetails({
         title: data.title,
         cover: get_thumbnail_url_from_hash(data.thumbnail_hash, true),
         tags,
         maxPage: data.files.length,
+        chapters,
         thumbnails: data.files.map((n) => get_thumbnail_url_from_hash(n.hash)),
         uploadTime: formatDate(data.posted_time),
         url: data.url,

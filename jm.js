@@ -7,7 +7,7 @@ class JM extends ComicSource {
     // unique id of the source
     key = "jm"
 
-    version = "1.4.0"
+    version = "1.4.2"
 
     minAppVersion = "1.5.0"
 
@@ -16,16 +16,29 @@ class JM extends ComicSource {
     static jmPkgName = "com.example.app"
 
     // update url
-    url = "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/jm.js"
+    url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venera-configs@main/jm.js"
 
     dailyCheckInInProgress = false
 
     static fallbackServers = [
-        "www.cdntwice.org",
-        "www.cdnsha.org",
-        "www.cdnaspa.cc",
-        "www.cdnntr.cc",
+        "www.cdnhjk.net",
+        "www.cdngwc.cc",
+        "www.cdngwc.net",
+        "www.cdngwc.club",
     ];
+
+    // Current api domains (init'ed from fallback, refreshed from the official domain list).
+    // Must be declared here so baseUrl works even before refreshApiDomains completes.
+    static apiDomains = [
+        "www.cdnhjk.net",
+        "www.cdngwc.cc",
+        "www.cdngwc.net",
+        "www.cdngwc.club",
+        "www.cdnutc.me",
+    ];
+
+    // Refresh the domain list at most every 12h on startup (failover covers the rest).
+    static domainCacheTtl = 12 * 3600 * 1000
 
     static imageUrl = "https://cdn-msp.jmapinodeudzn.net"
 
@@ -36,7 +49,13 @@ class JM extends ComicSource {
     }
 
     get baseUrl() {
-        let index = parseInt(this.loadSetting('apiDomain')) - 1
+        let index = this.loadData('lastApiDomain')
+        if (typeof index !== 'number') {
+            index = parseInt(this.loadSetting('apiDomain')) - 1
+        }
+        if (isNaN(index) || index < 0 || index >= JM.apiDomains.length) {
+            index = 0
+        }
         return `https://${JM.apiDomains[index]}`
     }
 
@@ -73,7 +92,8 @@ class JM extends ComicSource {
 
     getApiHeaders(time) {
         if (this.loadSetting("dailyCheckInTask")) {
-            this.dailyCheckIn(true)
+            // fire-and-forget: a failing check-in must never break api requests
+            this.dailyCheckIn(true).catch(() => {})
         }
         const jmAuthKey = "18comicAPPContent"
         let token = Convert.md5(Convert.encodeUtf8(`${time}${jmAuthKey}`))
@@ -117,8 +137,25 @@ class JM extends ComicSource {
     }
 
     async init() {
-        if (this.loadSetting('refreshDomainsOnStart')) await this.refreshApiDomains(false)
-        this.refreshImgUrl(false)
+        // Restore cached domains first so the source is usable immediately (offline-safe).
+        try {
+            let cache = this.loadData('domainCache')
+            let cached = cache && Array.isArray(cache.domains) && cache.domains.length > 0 ? cache : null
+            if (cached) {
+                this.overwriteApiDomains(cached.domains)
+            }
+            let stale = !cached || !cached.ts || Date.now() - cached.ts > JM.domainCacheTtl
+            if (this.loadSetting('refreshDomainsOnStart') && stale) {
+                await this.refreshApiDomains(false)
+            }
+        } catch (error) {
+            // keep current/fallback domains
+        }
+        try {
+            await this.refreshImgUrl(false)
+        } catch (error) {
+            // keep current/static image host
+        }
     }
 
     /**
@@ -139,18 +176,25 @@ class JM extends ComicSource {
             res = null;
         }
         if (res && res.status === 200) {
-            let data = this.convertData(await res.text(), domainSecret)
-            let json = JSON.parse(data)
-            if (json["Server"]) {
-                title = "Update Success"
-                message = "\n"
-                servers = json["Server"].slice(0, 4)
+            try {
+                let data = this.convertData(await res.text(), domainSecret)
+                let json = JSON.parse(data)
+                if (json["Server"]) {
+                    title = "Update Success"
+                    message = "\n"
+                    servers = json["Server"]
+                    this.saveData('domainCache', { domains: servers, ts: Date.now() })
+                }
+            } catch (error) {
+                servers = []
             }
         }
         if (servers.length === 0) {
             title = "Update Failed"
             message = `Using built-in domains:\n\n`
-            servers = JM.fallbackServers
+            // keep the current (possibly cached) domains if a refresh fails,
+            // only fall back to built-ins when nothing usable exists yet
+            servers = JM.apiDomains && JM.apiDomains.length > 0 ? JM.apiDomains : JM.fallbackServers
         }
         for (let i = 0; i < servers.length; i++) {
             message = message + `線路${i + 1}:  ${servers[i]}\n\n`
@@ -253,6 +297,42 @@ class JM extends ComicSource {
      * @returns {Promise<string>}
      */
     async get(url) {
+        let path = url.substring(url.indexOf('/', 8))
+        let domains = JM.apiDomains && JM.apiDomains.length > 0 ? JM.apiDomains : JM.fallbackServers
+        let start = parseInt(this.loadData('lastApiDomain'))
+        if (isNaN(start) || start < 0 || start >= domains.length) {
+            start = parseInt(this.loadSetting('apiDomain')) - 1
+        }
+        if (isNaN(start) || start < 0 || start >= domains.length) {
+            start = 0
+        }
+        let lastError = null
+        // try the current line first, then rotate through the rest (anti-blocking failover)
+        for (let i = 0; i < domains.length; i++) {
+            let idx = (start + i) % domains.length
+            try {
+                let data = await this.requestGet(`https://${domains[idx]}${path}`)
+                if (idx !== start) {
+                    // remember the working line so subsequent requests start from it
+                    this.saveData('lastApiDomain', idx)
+                }
+                return data
+            } catch (error) {
+                if (error && error.noFailover) {
+                    throw error
+                }
+                lastError = error
+            }
+        }
+        throw lastError
+    }
+
+    /**
+     *
+     * @param url {string}
+     * @returns {Promise<string>}
+     */
+    async requestGet(url) {
         let time = Math.floor(Date.now() / 1000)
         let kJmSecret = "185Hcomic3PAPP7R"
         let res = await Network.get(url, this.getApiHeaders(time))
@@ -260,17 +340,18 @@ class JM extends ComicSource {
             if(res.status === 401) {
                 let json = JSON.parse(res.body)
                 let message = json.errorMsg
-                if(message === "請先登入會員" && this.isLogged) {
-                    throw 'Login expired'
-                }
-                throw message ?? 'Invalid Status Code: ' + res.status
+                let error = new Error(message === "請先登入會員" && this.isLogged ? 'Login expired' : (message ?? 'Invalid Status Code: ' + res.status))
+                error.noFailover = true
+                throw error
             }
-            throw 'Invalid Status Code: ' + res.status
+            throw new Error('Invalid Status Code: ' + res.status)
         }
         let json = JSON.parse(res.body)
         let data = json.data
         if(typeof data !== 'string') {
-            throw 'Invalid Data'
+            let error = new Error('Invalid Data')
+            error.noFailover = true
+            throw error
         }
         return this.convertData(data, `${time}${kJmSecret}`)
     }
@@ -401,17 +482,23 @@ class JM extends ComicSource {
                     let title = e["title"]
                     let type = e.type
                     let id = e.id.toString()
-                    if (type === 'category_id') {
+                    let viewMore = null
+                    // 'category_id' and 'not_in_category_id' sections are filterable
+                    // by their slug via categories/filter (e.g. hanman / 禁漫漢化組).
+                    // Numeric ids are NOT accepted by that endpoint (falls back to the
+                    // default list), and 'promote' sections have no detail page at all.
+                    if (type === 'category_id' || type === 'not_in_category_id') {
                         id = e.slug
+                        viewMore = `category:${title}@${id}`
                     }
                     if (['library', 'novels'].includes(type)) {
                         continue
                     }
-                    let comics = e.content.map((e) => this.parseComic(e))
+                    let comics = (e.content ?? []).map((e) => this.parseComic(e))
                     result.push({
                         title: e.title,
                         comics: comics,
-                        viewMore: `category:${title}@${id}`
+                        viewMore: viewMore
                     })
                 }
 
@@ -773,7 +860,7 @@ class JM extends ComicSource {
             let works = data.works ?? []
             let actors = data.actors ?? []
             let chapters = new Map()
-            let series = (data.series ?? []).sort((a, b) => a.sort - b.sort)
+            let series = (data.series ?? []).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
             for(let e of series) {
                 let title = e.name ?? ''
                 title = title.trim()
@@ -787,7 +874,7 @@ class JM extends ComicSource {
                 chapters.set(id, '第1話')
             }
             let tags = data.tags ?? []
-            let related = data["related_list"].map((e) => new Comic({
+            let related = (data["related_list"] ?? []).map((e) => new Comic({
                 id: e.id.toString(),
                 title: e.name,
                 subtitle: e.author ?? "",
@@ -795,8 +882,11 @@ class JM extends ComicSource {
                 description: e.description ?? ""
             }))
             let updateTimeStamp = data["addtime"];
-            let date = new Date(updateTimeStamp * 1000)
-            let updateDate = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+            let updateDate = "";
+            if (updateTimeStamp) {
+                let date = new Date(updateTimeStamp * 1000)
+                updateDate = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+            }
 
             return new ComicDetails({
                 title: data.name,
@@ -853,21 +943,15 @@ class JM extends ComicSource {
                 num = 0
             } else if (epId < 268850) {
                 num = 10
-            } else if (epId > 421926) {
-                let str = epId.toString() + pictureName
-                let bytes = Convert.encodeUtf8(str)
-                let hash = Convert.md5(bytes)
-                let hashStr = Convert.hexEncode(hash)
-                let charCode = hashStr.charCodeAt(hashStr.length-1)
-                let remainder = charCode % 8
-                num = remainder * 2 + 2
             } else {
+                // >= 421926 uses mod 8, below uses mod 10 (same as the official client)
+                let mod = epId < 421926 ? 10 : 8
                 let str = epId.toString() + pictureName
                 let bytes = Convert.encodeUtf8(str)
                 let hash = Convert.md5(bytes)
                 let hashStr = Convert.hexEncode(hash)
                 let charCode = hashStr.charCodeAt(hashStr.length-1)
-                let remainder = charCode % 10
+                let remainder = charCode % mod
                 num = remainder * 2 + 2
             }
             if (num <= 1) {
@@ -938,15 +1022,24 @@ class JM extends ComicSource {
         loadComments: async (comicId, subId, page, replyTo) => {
             let res = await this.get(`${this.baseUrl}/forum?mode=manhua&aid=${comicId}&page=${page}`)
             let json = JSON.parse(res)
-            const pageSize = 6
+            // the forum api returns 10 comments per page
+            const pageSize = 10
             return {
-                comments: json.list.map((e) => new Comment({
-                    avatar: this.getAvatarUrl(e.photo),
-                    userName: e.username,
-                    time: e.addtime,
-                    content: e.content.substring(e.content.indexOf('>') + 1, e.content.lastIndexOf('<')),
-                })),
-                maxPage: Math.floor(json.total / pageSize) + 1
+                comments: json.list.map((e) => {
+                    let content = e.content ?? ''
+                    let start = content.indexOf('>')
+                    let end = content.lastIndexOf('<')
+                    if (start >= 0 && end > start) {
+                        content = content.substring(start + 1, end)
+                    }
+                    return new Comment({
+                        avatar: e.photo ? this.getAvatarUrl(e.photo) : "",
+                        userName: e.username,
+                        time: e.addtime,
+                        content: content,
+                    })
+                }),
+                maxPage: Math.max(1, Math.ceil(json.total / pageSize))
             }
         },
         /**
