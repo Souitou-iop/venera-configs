@@ -17,7 +17,8 @@
         "name": "Komiic",
         "fileName": "komiic.js",
         "key": "Komiic",
-        "version": "1.0.3"
+        "version": "1.1.0",
+        "description": "适配新版 imageTickets 鉴权，修复图片 402 加载失败问题"
     },
     {
         "name": "包子漫画",
