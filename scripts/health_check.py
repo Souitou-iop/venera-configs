@@ -1,37 +1,37 @@
 #!/usr/bin/env python3
 """
-Venera Comic Sources Automated Health Check Script
-Tests endpoint connectivity and basic responsiveness for all sources listed in index.json.
+VeneraX Comic Sources Automated Health Check Script
+Tests endpoint connectivity and basic responsiveness for all curated sources in index.json.
 """
 
 import json
 import os
 import sys
 import urllib.request
-import urllib.parse
 import time
 
 def check_source(source):
     key = source.get('key')
     name = source.get('name')
-    file_name = source.get('fileName')
     version = source.get('version', '1.0.0')
     
-    # Domain / API definitions for health check
+    # Accurate endpoint probes for the 15 curated sources
     targets = {
         'copy_manga': ('https://api.copy2000.online/api/v3/system/network2?platform=3', 'GET', {'User-Agent': 'COPY/3.0.9', 'source': 'copyApp'}),
         'Komiic': ('https://komiic.com/api/query', 'POST', {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://komiic.com/', 'Content-Type': 'application/json'}, json.dumps({'operationName': 'allCategory', 'variables': {}, 'query': 'query allCategory { allCategory { id name } }'}).encode('utf-8')),
         'baozi': ('https://baozimhcn.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'picacg': ('https://picaapi.picacomic.com/categories', 'GET', {'User-Agent': 'okhttp/3.8.1', 'api-key': 'C69BAF41DA5ABD1FFEDC6D2FEA56B'}),
+        'picacg': ('https://picaapi.picacomic.com/init', 'GET', {'User-Agent': 'okhttp/3.8.1', 'api-key': 'C69BAF41DA5ABD1FFEDC6D2FEA56B'}),
         'jm': ('https://rup4a04-c02.tos-cn-hongkong.bytepluses.com/newsvr-2025.txt', 'GET', {'User-Agent': 'Mozilla/5.0'}),
         'ehentai': ('https://api.e-hentai.org/api.php', 'POST', {'Content-Type': 'application/json'}, json.dumps({'method': 'gdata', 'gidlist': [[3380000, 'a1b2c3d4e5']]}).encode('utf-8')),
+        'nhentai': ('https://nhentai.net/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
+        'hitomi': ('https://hitomi.la/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
+        'wnacg': ('https://www.wnacg.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
         'manhuaren': ('https://www.manhuaren.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
         'ikmmh': ('https://www.ikamn.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'nhentai': ('https://nhentai.net/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'zaimanhua': ('https://api.zaimanhua.com/api/v3/system/network2?platform=3', 'GET', {'User-Agent': 'COPY/3.0.9'}),
-        'wnacg': ('https://www.wnacg.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'comick': ('https://api.comick.fun/top', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'manga_dex': ('https://api.mangadex.org/manga?limit=1', 'GET', {'User-Agent': 'Mozilla/5.0'}),
+        'ManHuaGui': ('https://www.manhuagui.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
+        'shonen_jump_plus': ('https://shonenjumpplus.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
+        'comic_walker': ('https://comic-walker.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
+        'ccc': ('https://www.creative-comic.tw/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
     }
     
     target_info = targets.get(key)
@@ -71,13 +71,13 @@ def main():
     with open(index_path, 'r', encoding='utf-8') as f:
         sources = json.load(f)
         
-    print(f"Starting Health Check for {len(sources)} comic sources...\n")
+    print(f"Starting Health Check for {len(sources)} curated comic sources...\n")
     results = []
     
     for s in sources:
         res = check_source(s)
         results.append(res)
-        print(f"  [{res['status']}] {res['name']:15} ({res['key']}) -> Code: {res['code']}, Latency: {res['latency']}")
+        print(f"  [{res['status']}] {res['name']:18} ({res['key']:16}) -> Code: {res['code']}, Latency: {res['latency']}")
         time.sleep(0.1)
         
     # Generate summary markdown table
