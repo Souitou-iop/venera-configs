@@ -3,13 +3,15 @@
         "name": "拷贝漫画",
         "fileName": "copy_manga.js",
         "key": "copy_manga",
-        "version": "1.4.1"
+        "version": "1.5.0",
+        "description": "修复后台API篡改崩溃、210风控超时死锁与旧版客户端指纹，增强节点容灾与设备自愈"
     },
     {
         "name": "拷贝漫画(多账号)",
         "fileName": "copy_manga_multi_accounts.js",
         "key": "copy_manga",
-        "version": "1.4.1"
+        "version": "1.5.0",
+        "description": "修复后台API篡改崩溃、210风控超时死锁与旧版客户端指纹，增强节点容灾与设备自愈"
     },
     {
         "name": "Komiic",
@@ -181,7 +183,7 @@
         "fileName": "hot_manga.js",
         "key": "hot_manga",
         "version": "1.0.0"
-	},
+    },
     {
         "name": "Kavita",
         "fileName": "kavita.js",
