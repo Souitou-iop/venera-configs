@@ -1,0 +1,50 @@
+name: Community Sources Tracker
+
+on:
+  schedule:
+    # Runs every Monday at 00:00 UTC (8:00 AM Beijing Time)
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  track-community:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Tracker
+        id: tracker
+        run: |
+          python scripts/track_community_updates.py
+          if [ -f /tmp/has_community_updates.txt ] && [ "$(cat /tmp/has_community_updates.txt)" = "true" ]; then
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create or Update Issue
+        if: steps.tracker.outputs.has_updates == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_TITLE="[社区更新动态] 发现社区漫画源有新版本或新源发布"
+          EXISTING_ISSUE=$(gh issue list --repo ${{ github.repository }} --state open --search "$ISSUE_TITLE in:title" --json number --jq '.[0].number')
+          
+          if [ -n "$EXISTING_ISSUE" ] && [ "$EXISTING_ISSUE" != "null" ]; then
+            echo "Updating existing issue #$EXISTING_ISSUE..."
+            gh issue comment "$EXISTING_ISSUE" --repo ${{ github.repository }} --body-file /tmp/community_updates_report.md
+          else
+            echo "Creating new notification issue..."
+            gh issue create --repo ${{ github.repository }} --title "$ISSUE_TITLE" --body-file /tmp/community_updates_report.md
+          fi
