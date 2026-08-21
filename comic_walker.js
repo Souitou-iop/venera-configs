@@ -76,16 +76,18 @@ class ComicWalker extends ComicSource {
   }
 
   async init() {
-    const itunes_api = "https://itunes.apple.com/lookup?bundleId=jp.co.bookwalker.cwapp.ios&country=jp";
+    try {
+      const itunes_api = "https://itunes.apple.com/lookup?bundleId=jp.co.bookwalker.cwapp.ios&country=jp";
+      const resp = await Network.get(itunes_api);
+      if (resp.status == 200) {
+        const responseData = JSON.parse(resp.body);
+        if (responseData.results && responseData.results[0] && responseData.results[0].version) {
+          this.latestVersion = responseData.results[0].version;
+        }
+      }
+    } catch (e) {}
 
-    const resp = await Network.get(itunes_api);
-
-    if (resp.status == 200) {
-      response = JSON.parse(resp.body);
-      this.latestVersion = response.version;
-    }
-
-    await this.refreshToken();
+    await this.refreshToken().catch(() => {});
   }
 
   explore = [
