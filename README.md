@@ -51,11 +51,11 @@
 
 ### 已测试环境
 本项目目前**仅经过本人在以下设备与系统环境中的实际测试与验证**：
-- **Mac (macOS)**
+- **Mac** (macOS 26.6)
 - **Windows**
-- **iPhone (iOS)**
-- **安卓手机 (Android / HyperOS)**
-- **安卓平板 (Android / HyperOS)**
+- **iPhone** (iOS 27)
+- **安卓手机** (Android 16 / HyperOS 3)
+- **安卓平板** (Android 16 / HyperOS 3)
 
 ### 问题反馈指南
 其他设备或系统环境下如果出现问题，欢迎提交 Issue 反映。提 Issue 时**请务必说明清楚**：
