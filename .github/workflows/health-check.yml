@@ -1,0 +1,24 @@
+name: Scheduled Comic Sources Health Check
+
+on:
+  schedule:
+    # Runs every Sunday at 00:00 UTC (8:00 AM Beijing Time)
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Health Check
+        run: |
+          python scripts/health_check.py

@@ -4,11 +4,11 @@ class CopyManga extends ComicSource {
 
     key = "copy_manga"
 
-    version = "1.4.1"
+    version = "1.5.0"
 
     minAppVersion = "1.6.0"
 
-    url = "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/copy_manga_multi_accounts.js"
+    url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venera-configs@main/copy_manga_multi_accounts.js"
 
     async getReqID() {
         if (this.copyRegion === "0") {
@@ -54,13 +54,13 @@ class CopyManga extends ComicSource {
         );
 
         return {
-            "User-Agent": `COPY/3.0.6`,
+            "User-Agent": `COPY/3.0.9`,
             "source": "copyApp",
             "deviceinfo": this.deviceinfo,
             "dt": `${year}.${month}.${day}`,
             "platform": "3",
-            "referer": `com.copymanga.app-3.0.6`,
-            "version": "3.0.6",
+            "referer": `com.copymanga.app-3.0.9`,
+            "version": "3.0.9",
             "device": this.device,
             "pseudoid": this.pseudoid,
             "Accept": "application/json",
@@ -156,8 +156,18 @@ class CopyManga extends ComicSource {
         return pseudoid;
     }
 
+    static apiEndpoints = [
+        'api.copy2000.online',
+        'api.copy-manga.com',
+        'api.mangacopy.com'
+    ];
+
     get apiUrl() {
-        return `https://${this.loadSetting('base_url')}`
+        let base = this.loadSetting('base_url');
+        if (!base || typeof base !== 'string' || base.includes('t66y') || base.length < 4) {
+            return `https://${CopyManga.defaultApiUrl}`;
+        }
+        return `https://${base}`;
     }
 
     get copyRegion() {
@@ -867,10 +877,10 @@ class CopyManga extends ComicSource {
             let getChapters = async (id, groups) => {
                 let fetchSingle = async (id, path) => {
                     let reqId = await this.getReqID();
-                    let res = await Network.get(
-                        `${this.apiUrl}/api/v3/comic/${id}/group/${path}/chapters?limit=100&offset=0&in_mainland=true&request_id=${reqId}`,
-                        this.headers
-                    );
+                    let chUrl = this.copyRegion === "0" || !reqId
+                        ? `${this.apiUrl}/api/v3/comic/${id}/group/${path}/chapters?limit=100&offset=0&in_mainland=false`
+                        : `${this.apiUrl}/api/v3/comic/${id}/group/${path}/chapters?limit=100&offset=0&in_mainland=true&request_id=${reqId}`;
+                    let res = await Network.get(chUrl, this.headers);
                     if (res.status !== 200) {
                         throw `Invalid status code: ${res.status}`;
                     }
@@ -885,10 +895,10 @@ class CopyManga extends ComicSource {
                     if (maxChapter > 100) {
                         let offset = 100;
                         while (offset < maxChapter) {
-                            res = await Network.get(
-                                `${this.apiUrl}/api/v3/comic/${id}/group/${path}/chapters?limit=100&offset=${offset}`,
-                                this.headers
-                            );
+                            let pageUrl = this.copyRegion === "0" || !reqId
+                                ? `${this.apiUrl}/api/v3/comic/${id}/group/${path}/chapters?limit=100&offset=${offset}&in_mainland=false`
+                                : `${this.apiUrl}/api/v3/comic/${id}/group/${path}/chapters?limit=100&offset=${offset}&in_mainland=true&request_id=${reqId}`;
+                            res = await Network.get(pageUrl, this.headers);
                             if (res.status !== 200) {
                                 throw `Invalid status code: ${res.status}`;
                             }
@@ -938,11 +948,11 @@ class CopyManga extends ComicSource {
                 return favAccounts.length > 0;
             }
             let reqId = await this.getReqID();
+            let comicUrl = this.copyRegion === "0" || !reqId
+                ? `${this.apiUrl}/api/v3/comic2/${id}?in_mainland=false&platform=3`
+                : `${this.apiUrl}/api/v3/comic2/${id}?in_mainland=true&request_id=${reqId}&platform=3`;
             let results = await Promise.all([
-                Network.get(
-                    `${this.apiUrl}/api/v3/comic2/${id}?in_mainland=true&request_id=${reqId}&platform=3`,
-                    this.headers
-                ),
+                Network.get(comicUrl, this.headers),
                 getFavoriteStatus.bind(this)(id)
             ])
 
@@ -1399,11 +1409,6 @@ class CopyManga extends ComicSource {
     }
 
     async refreshAppApi() {
-        const url = "https://api.copy-manga.com/api/v3/system/network2?platform=3"
-        const res = await fetch(url, { headers: this.headers });
-        if (res.status === 200) {
-            let data = await res.json();
-            this.settings.base_url = data.results.api[0][0];
-        }
+        // Disabled to prevent memory corruption
     }
 }
