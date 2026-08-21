@@ -36,9 +36,9 @@ class Ikm extends ComicSource {
   // 基础配置
   name = "爱看漫";
   key = "ikmmh";
-  version = "1.0.5";
+  version = "1.0.6";
   minAppVersion = "1.0.0";
-  url = "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/ikmmh.js";
+  url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venerax-configs-enhanced@main/ikmmh.js";
   // 常量定义
   static baseUrl = "https://www.ikmmh.com";
   static Mobile_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/140.0.0.0";
@@ -61,6 +61,10 @@ class Ikm extends ComicSource {
       "referer": Ikm.baseUrl,
     },
   });
+  // 探索页缓存 (5 分钟 TTL, 推荐/更新一天一变, 无需每次重拉)
+  static exploreCache = { time: 0, data: null };
+  // 收藏列表缓存 (30 秒 TTL, 避免每次进详情都重复拉取)
+  static favCache = { time: 0, data: null };
   // 账号系统
   account = {
     login: async (account, pwd) => {
@@ -101,6 +105,9 @@ class Ikm extends ComicSource {
       type: "singlePageWithMultiPart",
       load: async () => {
         try {
+          if (Ikm.exploreCache.data && Date.now() - Ikm.exploreCache.time < 300000) {
+            return Ikm.exploreCache.data;
+          }
           let res = await Network.get(`${Ikm.baseUrl}/`, Ikm.webHeaders);
           if (res.status !== 200)
             throw new Error(`加载探索页面失败，状态码：${res.status}`);
@@ -123,7 +130,7 @@ class Ikm extends ComicSource {
               id: link,
             };
           };
-          return {
+          let result = {
             "本周推荐": document
               .querySelectorAll("div.module-good-fir > div.item")
               .map(parseComic),
@@ -131,6 +138,8 @@ class Ikm extends ComicSource {
               .querySelectorAll("div.module-day-fir > div.item")
               .map(parseComic),
           };
+          Ikm.exploreCache = { time: Date.now(), data: result };
+          return result;
         } catch (err) {
           throw new Error(`探索页面加载失败：${err.message}`);
         }
@@ -384,6 +393,7 @@ class Ikm extends ComicSource {
           );
           let data = JSON.parse(res.body);
           if (data.code !== "0") throw new Error(data.msg || "收藏失败");
+          Ikm.favCache = { time: 0, data: null }; // 收藏变更后失效缓存
           return "ok";
         } else {
           // 删除收藏
@@ -404,6 +414,7 @@ class Ikm extends ComicSource {
 
           let data = JSON.parse(res.body);
           if (data.code !== "0") throw new Error(data.msg || "取消收藏失败");
+          Ikm.favCache = { time: 0, data: null }; // 收藏变更后失效缓存
           return "ok";
         }
       } catch (err) {
@@ -412,6 +423,9 @@ class Ikm extends ComicSource {
     },
     //加载收藏
     loadComics: async (page, folder) => {
+      if (Ikm.favCache.data && Date.now() - Ikm.favCache.time < 30000) {
+        return Ikm.favCache.data;
+      }
       let res = await Network.get(
         `${Ikm.baseUrl}/user/bookcase`,
         Ikm.webHeaders
@@ -429,7 +443,7 @@ class Ikm extends ComicSource {
       }
 
       let document = new HtmlDocument(res.body);
-      return {
+      let result = {
         comics: document.querySelectorAll("div.bookrack-item").map((e) => ({
           title: e.querySelector("h3").text.split("~")[0],
           subTitle: e.querySelector("p.desc").text,
@@ -438,6 +452,8 @@ class Ikm extends ComicSource {
         })),
         maxPage: 1,
       };
+      Ikm.favCache = { time: Date.now(), data: result };
+      return result;
     },
     onThumbnailLoad: Ikm.thumbConfig,
   };
@@ -452,23 +468,21 @@ class Ikm extends ComicSource {
       } catch (error) {
         console.error("加载收藏页失败:", error);
       }
-      let res = await Network.get(id, Ikm.webHeaders);
-
-      if (needPassValidator(res.body)) {
-        // rePost
-        res = await Network.get(id, Ikm.webHeaders);
-      }
-
-      let document = new HtmlDocument(res.body);
       let comicId = id.match(/\d+/)[0];
-      // 获取章节数据
-      let epRes = await Network.get(
-        `${Ikm.baseUrl}/api/comic/zyz/chapterlink?id=${comicId}`,
-        {
-          ...Ikm.jsonHead,
-          "referer": id,
-        }
-      );
+      // 并发获取详情页 + 章节 API (两者互不依赖, 原串行浪费一个 RTT)
+      let [res, epRes] = await Promise.all([
+        Network.get(id, Ikm.webHeaders).then((r) =>
+          needPassValidator(r.body) ? Network.get(id, Ikm.webHeaders) : r
+        ),
+        Network.get(
+          `${Ikm.baseUrl}/api/comic/zyz/chapterlink?id=${comicId}`,
+          {
+            ...Ikm.jsonHead,
+            "referer": id,
+          }
+        ),
+      ]);
+      let document = new HtmlDocument(res.body);
       let epData = JSON.parse(epRes.body);
       let eps = new Map();
       if (epData.data && epData.data.length > 0 && epData.data[0].list) {

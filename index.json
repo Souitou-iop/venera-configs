@@ -31,15 +31,15 @@
         "name": "爱看漫",
         "fileName": "ikmmh.js",
         "key": "ikmmh",
-        "version": "1.0.5",
-        "description": "综合全彩国漫与日漫"
+        "version": "1.0.6",
+        "description": "爱看漫：详情与章节并发拉取，新增探索页5分钟轻量缓存"
     },
     {
         "name": "漫画柜",
         "fileName": "manhuagui.js",
         "key": "ManHuaGui",
-        "version": "1.2.1",
-        "description": "老牌长篇连载漫画库：LZString 智能解码"
+        "version": "1.2.3",
+        "description": "漫画柜：逆向新版 LZString+splic 混淆，修复新章节解密失败问题"
     },
     {
         "name": "禁漫天堂",
@@ -80,8 +80,8 @@
         "name": "紳士漫畫",
         "fileName": "wnacg.js",
         "key": "wnacg",
-        "version": "1.0.5",
-        "description": "经典同人汉化站"
+        "version": "1.0.11",
+        "description": "紳士漫畫：修复移动端UA选择器崩溃，支持标题作者/社团提取与4重搜索排序"
     },
     {
         "name": "少年ジャンプ＋",

@@ -4,11 +4,11 @@ class ManHuaGui extends ComicSource {
 
   key = "ManHuaGui";
 
-  version = "1.2.1";
+  version = "1.2.3";
 
   minAppVersion = "1.4.0";
 
-  url = "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/manhuagui.js";
+  url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venerax-configs-enhanced@main/manhuagui.js";
 
   baseUrl = "https://www.manhuagui.com";
 
@@ -447,11 +447,54 @@ class ManHuaGui extends ComicSource {
 
       return result;
     }
+    // 新版章节数据 packer 反混淆:
+    // function(p,a,c,k,e,d){...}('PROG', a, c, 'BASE64'['\x73\x70\x6c\x69\x63']('\x7c'),0,{})
+    // 其中 k 数组 = LZString.decompressFromBase64('BASE64').split('|')
+    function unpackNewPacker(pcode, a, c, k) {
+      function e(c) {
+        return (c < a ? "" : e(parseInt(c / a))) +
+          ((c = c % a) > 35 ? String.fromCharCode(c + 29) : c.toString(36));
+      }
+      let out = pcode;
+      while (c--) if (k[c]) out = out.replace(new RegExp("\\b" + e(c) + "\\b", "g"), k[c]);
+      return out;
+    }
+    function extractImgData(decoded) {
+      let objStart = decoded.indexOf("{");
+      if (objStart < 0) throw "无法解析章节数据对象";
+      let depth = 0, end = -1;
+      for (let i = objStart; i < decoded.length; i++) {
+        let ch = decoded[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (end < 0) throw "无法解析章节数据对象";
+      let obj = JSON.parse(decoded.slice(objStart, end + 1));
+      return { files: obj.files || [], path: obj.path || "", sl: obj.sl || {} };
+    }
     this.getImgInfos = function (script) {
-      let params = extractParams(script);
-      let imgData = formatData(...params);
-      let imgInfos = extractFields(imgData);
-      return imgInfos;
+      // 匹配新版 packer (含被混淆成 \x73\x70\x6c\x69\x63 的 splice 方法)
+      let m = script.match(/\}\('([\s\S]*?)',\s*(\d+),\s*(\d+),\s*'([\s\S]*?)'\[\s*'\\x73\\x70\\x6c\\x69\\x63'\]\('\\x7c'\),0,\{\}\)/);
+      let a, c, pcode, base64;
+      if (m) {
+        pcode = m[1]; a = parseInt(m[2], 10); c = parseInt(m[3], 10); base64 = m[4];
+      } else {
+        // 兜底旧格式 (明文单词数组)
+        let params = extractParams(script);
+        pcode = params[0]; a = params[1]; c = params[2];
+        let k = (typeof params[3] === "string" ? params[3] : params[3].join("|"));
+        base64 = k;
+        let decomp = LZString.decompressFromBase64(base64);
+        let karr = decomp ? decomp.split("|") : [];
+        let imgData = unpackNewPacker(pcode, a, c, karr);
+        return extractImgData(imgData);
+      }
+      let decomp = LZString.decompressFromBase64(base64);
+      if (decomp == null) throw "章节数据解压失败";
+      let karr = decomp.split("|");
+      let imgData = unpackNewPacker(pcode, a, c, karr);
+      let infos = extractImgData(imgData);
+      return infos;
     };
 
     this.decodeViewState = function (viewState) {
@@ -1035,15 +1078,28 @@ class ManHuaGui extends ComicSource {
     loadEp: async (comicId, epId) => {
       let url = `${this.baseUrl}/comic/${comicId}/${epId}.html`;
       let document = await this.getHtml(url);
-      let script = document.querySelectorAll("script")[4].innerHTML;
+      // 按内容找 packer 脚本 (新版用被混淆成 \x73\x70\x6c\x69\x63 的 splice 方法取 key 数组)
+      let script = null;
+      for (let s of document.querySelectorAll("script")) {
+        let html = s.innerHTML;
+        if (html.includes("\\x73\\x70\\x6c\\x69\\x63") || html.includes(".splic") ||
+            (html.includes("}(") && html.includes(",62,"))) {
+          script = html;
+          break;
+        }
+      }
+      if (!script) throw "无法找到章节数据脚本";
       let infos = this.getImgInfos(script);
 
       let imgDomain = `https://us.hamreus.com`;
       let images = [];
-      for (let f of infos.files) {
-        let imgUrl =
-          imgDomain + infos.path + f + `?e=${infos.sl.e}&m=${infos.sl.m}`;
-        images.push(imgUrl);
+      if (infos.files && infos.files.length > 0) {
+        for (let f of infos.files) {
+          let imgUrl =
+            imgDomain + infos.path + f +
+            (infos.sl && infos.sl.e != null ? `?e=${infos.sl.e}&m=${infos.sl.m}` : "");
+          images.push(imgUrl);
+        }
       }
       return {
         images,
