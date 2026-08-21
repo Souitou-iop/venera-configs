@@ -1,27 +1,31 @@
-# Venera / VeneraX 漫画源配置库 (Enhanced)
+# VeneraX 漫画源配置增强库 (venerax-configs-enhanced)
 
-本项目是 [venera-app/venera-configs](https://github.com/venera-app/venera-configs) 的社区维护与增强分支，主要针对原版漫画源中存在的**接口失效、内存污染崩溃、风控拦截超时、旧版客户端指纹**等问题进行持续修复与体验优化，适配 Venera 及衍生客户端（如 VeneraX）。
+本项目是基于 [venera-app/venera-configs](https://github.com/venera-app/venera-configs) 构建的社区维护与增强分支，主要针对原版漫画源中存在的**接口失效、内存污染崩溃、风控拦截超时、旧版客户端指纹**等问题进行持续修复与深度优化。
+
+> [!IMPORTANT]
+> **关于客户端兼容性与测试说明**：
+> 本项目中的漫画源配置遵循 Venera 标准 JS 规范编写，理论上兼容原版 Venera 及各类衍生客户端。但由于原版 Venera 已正式归档停更，**本项目的所有核心修复、防封策略、鉴权适配与性能优化均仅在 [VeneraX](https://github.com/Kyosee/VeneraX) 客户端上进行过真机深度实测与验证**。强烈建议搭配 VeneraX 客户端使用以获得最佳稳定性和无缝阅读体验。
 
 ---
 
 ## 🚀 订阅源地址
 
-在 Venera / VeneraX 应用内进入：**设置 → 漫画源管理 → 添加漫画源库（右上角）**，填入以下任意订阅链接：
+在 VeneraX（或 Venera）应用内进入：**设置 → 漫画源管理 → 点击【漫画源库】（图标为书本） → 添加源库（右上角）**，填入以下任意订阅链接：
 
 - **jsDelivr CDN（国内直连加速，推荐）**：
   ```text
-  https://cdn.jsdelivr.net/gh/Souitou-iop/venera-configs@main/index.json
+  https://cdn.jsdelivr.net/gh/Souitou-iop/venerax-configs-enhanced@main/index.json
   ```
 - **GitHub Raw 订阅地址**：
   ```text
-  https://raw.githubusercontent.com/Souitou-iop/venera-configs/main/index.json
+  https://raw.githubusercontent.com/Souitou-iop/venerax-configs-enhanced/main/index.json
   ```
 
 ---
 
 ## 🧭 各漫画源最佳线路与网络推荐指南 (Recommended Lines)
 
-经在**中国大陆直连网络（阿里云广州骨干网节点）**与**海外代理网络**环境下的全面实测，各漫画源的最佳线路选择与推荐设置如下：
+经在**中国大陆直连网络（国内骨干网节点）**与**海外代理网络**环境下的全面实测，各漫画源的最佳线路选择与推荐设置如下：
 
 | 漫画源 | 支持的线路/分流选项 | 国内直连环境推荐 | 代理/科学上网环境推荐 | 实测与设置建议 |
 | :--- | :--- | :---: | :---: | :--- |
@@ -86,13 +90,13 @@
 ## 📱 适配测试与问题反馈
 
 ### 已测试环境
-本项目目前**仅经过本人在以下设备与网络环境中的实际测试与验证**：
+本项目目前**仅经过本人在以下设备与网络环境中的实际测试与验证**（基于 VeneraX 客户端）：
 - **测试设备**：
-  - **Mac** (macOS 26.6)
-  - **Windows**
-  - **iPhone** (iOS 27)
-  - **安卓手机** (Android 16 / HyperOS 3)
-  - **安卓平板** (Android 16 / HyperOS 3)
+  - **Mac** (macOS 26.6 / VeneraX)
+  - **Windows** (VeneraX)
+  - **iPhone** (iOS 27 / VeneraX)
+  - **安卓手机** (Android 16 / HyperOS 3 / VeneraX)
+  - **安卓平板** (Android 16 / HyperOS 3 / VeneraX)
 - **网络环境**：
   - 测试覆盖了**具备海外访问能力的代理网络环境**以及**国内骨干网直连网络**。
 
@@ -107,6 +111,6 @@
 
 ## ⚖️ 免责声明 (Disclaimer)
 
-1. 本项目仅为开源漫画阅读器（Venera / VeneraX）提供网络接口解析规则脚本（Parser），**本项目不提供、不托管、不存储、亦不传播任何漫画图像、文本或媒体资源**。
+1. 本项目仅为开源漫画阅读器（VeneraX / Venera）提供网络接口解析规则脚本（Parser），**本项目不提供、不托管、不存储、亦不传播任何漫画图像、文本或媒体资源**。
 2. 脚本中所有网络请求均由客户端直接发起并连接至公开的第三方网络服务，本项目不对第三方内容的可用性、准确性、合法性承担任何责任。
 3. 本项目所有代码仅供开源技术研究与个人学习交流使用，请在遵循当地法律法规的前提下合法使用。

@@ -1244,7 +1244,7 @@ class Hitomi extends ComicSource {
   minAppVersion = "1.4.6";
 
   // update url
-  url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venera-configs@main/hitomi.js";
+  url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venerax-configs-enhanced@main/hitomi.js";
 
   galleryCache = [];
   categoryResultCache = undefined;

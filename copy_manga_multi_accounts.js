@@ -8,7 +8,7 @@ class CopyManga extends ComicSource {
 
     minAppVersion = "1.6.0"
 
-    url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venera-configs@main/copy_manga_multi_accounts.js"
+    url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venerax-configs-enhanced@main/copy_manga_multi_accounts.js"
 
     async getReqID() {
         if (this.copyRegion === "0") {
