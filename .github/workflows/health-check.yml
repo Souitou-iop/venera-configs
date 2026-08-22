@@ -2,8 +2,9 @@ name: Scheduled Comic Sources Health Check & Latency Benchmark
 
 on:
   schedule:
-    # Runs every Monday at 00:00 UTC (8:00 AM Beijing Time)
-    - cron: '0 0 * * 1'
+    
+    # Runs twice daily: 08:15 and 20:15 (Beijing Time / UTC+8)
+    - cron: '15 0,12 * * *'
   workflow_dispatch:
 
 permissions:

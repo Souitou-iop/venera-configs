@@ -2,8 +2,9 @@ name: Community Sources Tracker
 
 on:
   schedule:
-    # Runs every Monday at 00:00 UTC (8:00 AM Beijing Time)
-    - cron: '0 0 * * 1'
+    
+    # Runs every 2 days at 08:45 (Beijing Time / UTC+8)
+    - cron: '45 0 */2 * *'
   workflow_dispatch:
 
 permissions:
