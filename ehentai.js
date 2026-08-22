@@ -1,4 +1,14 @@
 class Ehentai extends ComicSource {
+  // 统一请求头 (防封: 模拟真实浏览器, Referer 跟随域名设置)
+  get webHeaders() {
+    return {
+      "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+      "Referer": this.baseUrl + "/",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    };
+  }
+
     // Note: The fields which are marked as [Optional] should be removed if not used
 
     // name of the source
@@ -7,12 +17,12 @@ class Ehentai extends ComicSource {
     // unique id of the source
     key = "ehentai"
 
-    version = "1.2.0"
+    version = "1.2.3"
 
     minAppVersion = "1.5.3"
 
     // update url
-    url = "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/ehentai.js"
+    url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venerax-configs-enhanced@main/ehentai.js"
 
     /**
      * cached api key
@@ -52,7 +62,7 @@ class Ehentai extends ComicSource {
         if (lastEvent == newTime) {
             return;
         }
-        const res = await Network.get("https://e-hentai.org/news.php", {});
+        const res = await Network.get("https://e-hentai.org/news.php", this.webHeaders);
         if (res.status !== 200) {
             return;
         }
@@ -228,7 +238,7 @@ class Ehentai extends ComicSource {
         let t = isLeaderBoard ? 1 : 0;
         let res
         try {
-            res = await Network.get(url, {});
+            res = await Network.get(url, this.webHeaders);
         }
         catch (e) {
             if(e.toString().toLowerCase().includes("redirect")) {
@@ -252,7 +262,7 @@ class Ehentai extends ComicSource {
         let galleries = [];
 
         // compact mode
-        for (let item of document.querySelectorAll("table.itg.gltc > tbody > tr")) {
+        for (let item of document.querySelectorAll("table.itg.gltc > tr, table.itg.gltc > tbody > tr")) {
             try {
                 let type = item.children[0 + t].children[0].text;
                 let time = item.children[1 + t].children[2].children[0].text;
@@ -324,7 +334,7 @@ class Ehentai extends ComicSource {
         }
 
         // Extended mode
-        for (let item of document.querySelectorAll("table.itg.glte > tbody > tr")) {
+        for (let item of document.querySelectorAll("table.itg.glte > tr, table.itg.glte > tbody > tr")) {
             try {
                 let title = item.querySelector("td.gl2e > div > a > div > div.glink")?.text ?? "Unknown";
                 let type = item.querySelector("td.gl2e > div > div.gl3e > div.cn")?.text ?? "Unknown";
@@ -353,7 +363,7 @@ class Ehentai extends ComicSource {
         }
 
         // minimal mode
-        for (let item of document.querySelectorAll("table.itg.gltm > tbody > tr")) {
+        for (let item of document.querySelectorAll("table.itg.gltm > tr, table.itg.gltm > tbody > tr")) {
             try {
                 let title = item.querySelector("td.gl3m > a > div.glink")?.text ?? "Unknown";
                 let type = item.querySelector("td.gl1m > div.cs")?.text ?? "Unknown";
@@ -485,7 +495,7 @@ class Ehentai extends ComicSource {
          * @returns {Promise<{comics: Comic[], maxPage: number}>}
          */
         loadNext: async (keyword, options, next) => {
-            let category = JSON.parse(options[0]);
+            let category = (options && options[0]) ? JSON.parse(options[0]) : [];
             let stars = options[1];
             let language = options[2];
             let fcats = 1023
@@ -624,7 +634,7 @@ class Ehentai extends ComicSource {
             try {
                 this.checkEHEvent();
             } catch (_) {}
-            let res = await Network.get(`${this.baseUrl}/favorites.php`, {});
+            let res = await Network.get(`${this.baseUrl}/favorites.php`, this.webHeaders);
             if (res.status !== 200) {
                 throw `Invalid status code: ${res.status}`
             }
@@ -677,6 +687,7 @@ class Ehentai extends ComicSource {
                 this.checkEHEvent();
             } catch (_) {}
             let res = await Network.get(id, {
+                ...this.webHeaders,
                 'cookie': 'nw=1'
             });
             if (res.status !== 200) {
@@ -713,15 +724,14 @@ class Ehentai extends ComicSource {
             }
 
             let tags = new Map();
-            for(let tr of document.querySelectorAll("div#taglist > table > tbody > tr")) {
+            for(let tr of document.querySelectorAll("div#taglist > table > tr, div#taglist > table > tbody > tr")) {
                 tags.set(
                     tr.children[0].text.substring(0, tr.children[0].text.length - 1),
-                    tr.children[1].children.map((e) =>
-                        e.children[0]
-                        .attributes["onclick"]
-                        .split(":")[1]
-                        .split("'")[0]
-                    )
+                    tr.children[1].children.map((e) => {
+                        let onclick = e.children[0]?.attributes["onclick"] ?? "";
+                        let tagMatch = /toggle_tagmenu\([^,]*,'([^']*)'/.exec(onclick);
+                        return tagMatch ? tagMatch[1] : onclick;
+                    })
                 )
             }
 
@@ -761,7 +771,7 @@ class Ehentai extends ComicSource {
                 tags.set("uploader", [uploader]);
             }
             
-            let time = document.querySelector("div#gdd > table > tbody > tr > td.gdt2").text
+            let time = document.querySelector("div#gdd > table > tr > td.gdt2, div#gdd > table > tbody > tr > td.gdt2").text
 
             let script = document.querySelectorAll("script").find((e) => e.text.includes("var token"));
             let reg = RegExp("var\\s+(\\w+)\\s*=\\s*(.*?);", "g");
@@ -792,6 +802,11 @@ class Ehentai extends ComicSource {
                 comments: comments.comments,
             })
 
+            // A gallery is read as a single chapter.
+            let chapters = new Map();
+            chapters.set("1", title ?? "Default");
+            comic.chapters = chapters
+
             comic.folder = folder
             comic.token = variables.get("token")
             this.apikey = variables.get("apikey")
@@ -816,6 +831,7 @@ class Ehentai extends ComicSource {
                 url += `?p=${next}`
             }
             let res = await Network.get(url, {
+                ...this.webHeaders,
                 'cache-time': 'long',
                 'prevent-parallel': 'true',
                 'cookie': 'nw=1'
@@ -909,6 +925,7 @@ class Ehentai extends ComicSource {
 
         getKey: async (url) => {
             let res = await Network.get(url, {
+                ...this.webHeaders,
                 'cache-time': 'long',
                 'prevent-parallel': 'true',
             })
@@ -1166,7 +1183,7 @@ class Ehentai extends ComicSource {
                 let urlParseResult = this.parseUrl(cid)
                 let gid = urlParseResult.id
                 let token = urlParseResult.token
-                let res = await Network.get(`${this.baseUrl}/archiver.php?gid=${gid}&token=${token}`, {})
+                let res = await Network.get(`${this.baseUrl}/archiver.php?gid=${gid}&token=${token}`, this.webHeaders)
                 if(res.status !== 200) {
                     throw `Invalid status code: ${res.status}`
                 }

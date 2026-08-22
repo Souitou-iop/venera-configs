@@ -1,4 +1,14 @@
 class Nhentai extends ComicSource {
+  // 统一请求头 (防封: 模拟真实浏览器, Referer 跟随域名设置)
+  get webHeaders() {
+    return {
+      "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+      "Referer": this.baseUrl + "/",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    };
+  }
+
     // Note: The fields which are marked as [Optional] should be removed if not used
 
     // name of the source
@@ -7,12 +17,12 @@ class Nhentai extends ComicSource {
     // unique id of the source
     key = "nhentai"
 
-    version = "1.1.0"
+    version = "1.1.3"
 
     minAppVersion = "1.0.0"
 
     // update url
-    url = "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/nhentai.js"
+    url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venerax-configs-enhanced@main/nhentai.js"
 
     baseUrl = "https://nhentai.net"
     apiBaseUrl = "https://nhentai.net/api/v2"
@@ -195,11 +205,25 @@ class Nhentai extends ComicSource {
             }
         }
 
+        // v2 list API may return either the legacy flat fields
+        // (english_title/japanese_title + string thumbnail) or the newer
+        // nested format (title object + cover/thumbnail object with .path).
+        let title =
+            item.english_title ||
+            item.japanese_title ||
+            item.title?.english ||
+            item.title?.pretty ||
+            item.title?.japanese ||
+            String(item.id);
+        let thumb =
+            typeof item.thumbnail === "string" ? item.thumbnail :
+            (item.thumbnail?.path || item.cover?.path || "");
+
         return new Comic({
             id: String(item.id),
-            title: item.english_title || item.japanese_title || String(item.id),
+            title: title,
             subtitle: "",
-            cover: this.toAbsoluteMediaUrl(item.thumbnail, true),
+            cover: this.toAbsoluteMediaUrl(thumb, true),
             tags: tagsRes,
             description: String(item.id),
             language: lang,
@@ -692,7 +716,7 @@ class Nhentai extends ComicSource {
     // API 找不到时保留网页备用
             let url =
             `${this.baseUrl}/${param}/${encodeURIComponent(category)}?page=${page}`;
-            let res = await Network.get(url,{});
+            let res = await Network.get(url, this.webHeaders);
             return this.parseComicList(
                 res.body,
                 "category"
@@ -724,12 +748,19 @@ class Nhentai extends ComicSource {
          */
         load: async (keyword, options, page) => {
             let sort = options[0] || "date"
+            // 第一页结果缓存 60s (nhentai API 限速 ~1req/2s, 防 429)
+            const cacheKey = `${keyword}|${sort}|${page}`
+            if (this.searchCache?.key === cacheKey && Date.now() - this.searchCache.time < 60000) {
+                return this.searchCache.data;
+            }
             let url = `${this.apiBaseUrl}/search?query=${encodeURIComponent(keyword)}&page=${page}&sort=${sort}`
             let res = await Network.get(url, this.getApiBaseHeaders());
             if(res.status !== 200) {
                 throw "Invalid Status Code: " + res.status
             }
-            return this.parseComicListFromApi(JSON.parse(res.body))
+            let result = this.parseComicListFromApi(JSON.parse(res.body))
+            this.searchCache = { key: cacheKey, time: Date.now(), data: result };
+            return result
         },
 
         // provide options for search
@@ -875,11 +906,15 @@ class Nhentai extends ComicSource {
                     related: related,
                     url: `${this.baseUrl}/g/${id}/`,
                 })
+                // 单个 gallery 即一个章节
+                let chapters = new Map();
+                chapters.set("1", title || String(id));
+                comic.chapters = chapters
                 comic.csrfToken = ""
                 return comic
             }
 
-            let res = await Network.get(`${this.baseUrl}/g/${id}/`, {})
+            let res = await Network.get(`${this.baseUrl}/g/${id}/`, this.webHeaders)
             if(res.status !== 200) {
                 throw "Invalid Status Code: " + res.status
             }
@@ -947,6 +982,10 @@ class Nhentai extends ComicSource {
                 url: `${this.baseUrl}/g/${id}/`,
             })
             comic.csrfToken = csrfToken
+            // 单个 gallery 即一个章节
+            let chapters = new Map();
+            chapters.set("1", title || String(id));
+            comic.chapters = chapters
             return comic
         },
         /**

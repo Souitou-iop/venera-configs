@@ -1,16 +1,19 @@
 class ComicWalker extends ComicSource {
   name = "カドコミ";
   key = "comic_walker";
-  version = "1.0.0";
+  version = "1.1.0";
   minAppVersion = "1.6.0";
   url =
-    "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/comic_walker.js";
+    "https://cdn.jsdelivr.net/gh/Souitou-iop/venerax-configs-enhanced@main/comic_walker.js";
 
   api_key = "ytBrdQ2ZYdRQguqEusVLxQVUgakNnVht";
 
-  latestVersion = "1.4.13";
+  latestVersion = "1.6.3";
 
   api_base = "https://mobileapp.comic-walker.com";
+
+  // 避免框架回调报错
+  onTagSuggestionSelected() {}
 
   get headers() {
     const headers = {

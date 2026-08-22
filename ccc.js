@@ -8,12 +8,12 @@ class CCC extends ComicSource {
     // unique id of the source
     key = "ccc"
 
-    version = "1.0.1"
+    version = "1.0.3"
 
     minAppVersion = "1.6.0"
 
     // update url
-    url = "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/ccc.js"
+    url = "https://cdn.jsdelivr.net/gh/Souitou-iop/venerax-configs-enhanced@main/ccc.js"
 
     apiUrl = "https://api.creative-comic.tw"
 
@@ -303,26 +303,29 @@ class CCC extends ComicSource {
          * @returns {Promise<{comics: Comic[], maxPage: number}>}
          */
         load: async (keyword, options, page) => {
-            options[0] = "&sort_by=" + options[0];
-            if (options[1]) {
-                options[1] = "&type=" + options[1];
+            if (options == null) {
+                options = [];
             }
-            if (options[2]) {
-                options[2] = "&serial=" + options[2];
-            }
-            if (options[3]) {
-                options[3] = "&updated_at=" + options[3];
-            }
-            if (options[4]) {
-                options[4] = "&literature_form=" + options[4];
-            }
-            if (options[5]) {
-                options[5] = "&comic_type=" + options[5];
-            }
-            if (options[6]) {
-                options[6] = "&publisher=" + options[6];
-            }
-            const url = `https://api.creative-comic.tw/book?page=${page}&rows_per_page=20&keyword=${keyword}&class=2${options.join("")}`;
+            const params = [
+                `page=${page}`,
+                "rows_per_page=20",
+                `keyword=${encodeURIComponent(keyword)}`,
+                "class=2",
+            ];
+            const add = (n, val) => {
+                if (val != null && val !== "" && val !== "undefined") {
+                    params.push(`${n}=${encodeURIComponent(val)}`);
+                }
+            };
+            // 排序
+            add("sort_by", options[0]);
+            add("type", options[1]);
+            add("serial", options[2]);
+            add("updated_at", options[3]);
+            add("literature_form", options[4]);
+            add("comic_type", options[5]);
+            add("publisher", options[6]);
+            const url = `https://api.creative-comic.tw/book?${params.join("&")}`;
             return await this.parseComics(url);
         },
 
@@ -526,7 +529,13 @@ class CCC extends ComicSource {
          * @returns {Promise<ComicDetails>}
          */
         loadInfo: async (id) => {
-            const res = await Network.get(`${this.apiUrl}/book/${id}/info`, await this.getApiHeaders());
+            const headers = await this.getApiHeaders();
+            // 并发获取 info/chapter/recommend (原串行浪费 2 个 RTT, 头只取一次避免并发刷新 token)
+            const [res, chapter_res, recommend_res] = await Promise.all([
+                Network.get(`${this.apiUrl}/book/${id}/info`, headers),
+                Network.get(`${this.apiUrl}/book/${id}/chapter`, headers),
+                Network.get(`${this.apiUrl}/book/${id}/recommend`, headers),
+            ]);
             const jsonData = JSON.parse(res.body)["data"];
             const authors = [];
             for (let a of jsonData["author"]) {
@@ -536,13 +545,11 @@ class CCC extends ComicSource {
             for (let t of jsonData["tags"]) {
                 tags.push(t["name"]);
             }
-            const chapter_res = await Network.get(`${this.apiUrl}/book/${id}/chapter`, await this.getApiHeaders());
             const chapterData = JSON.parse(chapter_res.body)["data"];
             const chapters = {};
             for (let c of chapterData["chapters"]) {
                 chapters[c["id"].toString()] = `${!this.comic.freeRead(c) ? "[付費]" : ""}${c["vol_name"]}-${c["name"]}`;
             }
-            const recommend_res = await Network.get(`${this.apiUrl}/book/${id}/recommend`, await this.getApiHeaders());
             const recommendData = JSON.parse(recommend_res.body)["data"];
             const recommends = [];
             for (let r of recommendData["hot"]) {

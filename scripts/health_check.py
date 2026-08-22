@@ -9,6 +9,33 @@ import os
 import sys
 import urllib.request
 import time
+import hmac
+import hashlib
+import uuid
+
+def get_pica_headers():
+    path = "init"
+    method = "GET"
+    nonce = uuid.uuid4().hex
+    t = str(int(time.time()))
+    api_key = "C69BAF41DA5ABD1FFEDC6D2FEA56B"
+    raw_data = (path + t + nonce + method + api_key).lower()
+    secret = '~d}$Q7$eIni=V)9\\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn'
+    signature = hmac.new(secret.encode('utf-8'), raw_data.encode('utf-8'), hashlib.sha256).hexdigest()
+    return {
+        "api-key": api_key,
+        "accept": "application/vnd.picacomic.com.v1+json",
+        "app-channel": "3",
+        "app-platform": "android",
+        "app-build-version": "45",
+        "Content-Type": "application/json; charset=UTF-8",
+        "user-agent": "okhttp/3.8.1",
+        "version": "v1.5.4",
+        "time": t,
+        "nonce": nonce,
+        "signature": signature,
+        "http_client": "dart:io"
+    }
 
 def check_source(source):
     key = source.get('key')
@@ -17,31 +44,28 @@ def check_source(source):
     
     # Accurate endpoint probes for the 15 curated sources
     targets = {
-        'copy_manga': ('https://api.copy2000.online/api/v3/system/network2?platform=3', 'GET', {'User-Agent': 'COPY/3.0.9', 'source': 'copyApp'}),
+        'copy_manga': ('https://api.copy2000.online/api/v3/system/network2?platform=3', 'GET', {'User-Agent': 'COPY/3.0.9', 'source': 'copyApp'}, None),
         'Komiic': ('https://komiic.com/api/query', 'POST', {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://komiic.com/', 'Content-Type': 'application/json'}, json.dumps({'operationName': 'allCategory', 'variables': {}, 'query': 'query allCategory { allCategory { id name } }'}).encode('utf-8')),
-        'baozi': ('https://baozimhcn.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'picacg': ('https://picaapi.picacomic.com/init', 'GET', {'User-Agent': 'okhttp/3.8.1', 'api-key': 'C69BAF41DA5ABD1FFEDC6D2FEA56B'}),
-        'jm': ('https://rup4a04-c02.tos-cn-hongkong.bytepluses.com/newsvr-2025.txt', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'ehentai': ('https://api.e-hentai.org/api.php', 'POST', {'Content-Type': 'application/json'}, json.dumps({'method': 'gdata', 'gidlist': [[3380000, 'a1b2c3d4e5']]}).encode('utf-8')),
-        'nhentai': ('https://nhentai.net/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'hitomi': ('https://hitomi.la/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'wnacg': ('https://www.wnacg.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'manhuaren': ('https://www.manhuaren.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'ikmmh': ('https://www.ikamn.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'ManHuaGui': ('https://www.manhuagui.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'shonen_jump_plus': ('https://shonenjumpplus.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'comic_walker': ('https://comic-walker.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
-        'ccc': ('https://www.creative-comic.tw/', 'GET', {'User-Agent': 'Mozilla/5.0'}),
+        'baozi': ('https://baozimhcn.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}, None),
+        'picacg': ('https://picaapi.picacomic.com/init', 'GET', get_pica_headers(), None),
+        'jm': ('https://rup4a04-c02.tos-cn-hongkong.bytepluses.com/newsvr-2025.txt', 'GET', {'User-Agent': 'Mozilla/5.0'}, None),
+        'ehentai': ('https://api.e-hentai.org/api.php', 'POST', {'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}, json.dumps({'method': 'gdata', 'gidlist': [[3380000, 'a1b2c3d4e5']]}).encode('utf-8')),
+        'nhentai': ('https://nhentai.net/api/v2/search?query=chinese&page=1&sort=date', 'GET', {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://nhentai.net/'}, None),
+        'hitomi': ('https://hitomi.la/', 'GET', {'User-Agent': 'Mozilla/5.0'}, None),
+        'wnacg': ('https://www.wnacg.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}, None),
+        'manhuaren': ('https://www.manhuaren.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}, None),
+        'ikmmh': ('https://www.ikamn.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}, None),
+        'ManHuaGui': ('https://manhuagui.com/', 'GET', {'User-Agent': 'Mozilla/5.0'}, None),
+        'shonen_jump_plus': ('https://shonenjumpplus.com/api/v1/user_account/access_token', 'POST', {'Origin': 'https://shonenjumpplus.com', 'Referer': 'https://shonenjumpplus.com/', 'X-Giga-Device-Id': '0123456789abcdef', 'User-Agent': 'ShonenJumpPlus-Android/4.3.0'}, b''),
+        'comic_walker': ('https://mobileapp.comic-walker.com/v1/users', 'POST', {'X-API-Environment-Key': 'ytBrdQ2ZYdRQguqEusVLxQVUgakNnVht', 'User-Agent': 'BookWalkerApp/1.6.3 (Android 13)', 'Content-Type': 'application/json'}, b''),
+        'ccc': ('https://api.creative-comic.tw/public/home_v2', 'GET', {'User-Agent': 'Mozilla/5.0', 'device': 'web_desktop', 'uuid': 'null'}, None),
     }
     
     target_info = targets.get(key)
     if not target_info:
         return {'key': key, 'name': name, 'version': version, 'status': '⚪ 未配置探测', 'code': '-', 'latency': '-'}
     
-    url = target_info[0]
-    method = target_info[1]
-    headers = target_info[2]
-    data = target_info[3] if len(target_info) > 3 else None
+    url, method, headers, data = target_info
     
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     start_time = time.time()
@@ -63,6 +87,8 @@ def check_source(source):
 def main():
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     index_path = os.path.join(root_dir, 'index.json')
+    if not os.path.exists(index_path):
+        index_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.json')
     
     if not os.path.exists(index_path):
         print(f"Error: {index_path} not found")
