@@ -1,24 +1,72 @@
-name: Scheduled Comic Sources Health Check
+name: Scheduled Comic Sources Health Check & Latency Benchmark
 
 on:
   schedule:
-    # Runs every Sunday at 00:00 UTC (8:00 AM Beijing Time)
-    - cron: '0 0 * * 0'
+    # Runs every Monday at 00:00 UTC (8:00 AM Beijing Time)
+    - cron: '0 0 * * 1'
   workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
 
 jobs:
   health-check:
+    name: Dual-Engine Latency Probe & Auto Update
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Run Health Check
+      - name: Run Hybrid Health Check
+        id: run_probe
+        env:
+          PROBE_SSH_KEY: ${{ secrets.PROBE_SSH_KEY }}
+          PROBE_HOST: ${{ secrets.PROBE_HOST || '8.163.60.144' }}
+          PROBE_USER: ${{ secrets.PROBE_USER || 'probe-runner' }}
         run: |
-          python scripts/health_check.py
+          python scripts/hybrid_health_check.py
+        continue-on-error: true
+
+      - name: Send Alert Issue & Push Notification (if degraded)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "/tmp/has_alert.txt" ] && [ "$(cat /tmp/has_alert.txt)" = "true" ]; then
+            echo "🚨 Triggering alert Issue to notify maintainer..."
+            gh issue create \
+              --title "[🚨 探活异常告警] 漫画源或测速引擎发生严重异常" \
+              --body-file "/tmp/health_check_alert.md" \
+              --assignee "${{ github.repository_owner }}" \
+              --label "bug" || true
+          fi
+
+      - name: Commit and Push README Updates
+        if: steps.run_probe.outcome == 'success'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          if ! git diff --quiet README.md; then
+            echo "📝 README.md updated with latest benchmark data, committing..."
+            git add README.md
+            git commit -m "docs: 自动同步最新双网络环境实测延迟数据 [skip ci]"
+            git push origin main
+          else
+            echo "✅ README.md latency data unchanged, skipping commit."
+          fi
+
+      - name: Propagate Final Status
+        if: steps.run_probe.outcome != 'success'
+        run: |
+          echo "::error::Health check workflow experienced fatal errors. Alert has been dispatched."
+          exit 1
