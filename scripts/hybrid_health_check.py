@@ -184,9 +184,15 @@ def get_pica_headers():
     }
 
 
-def get_bj_time_str(fmt='%Y-%m-%d %H:%M (北京时间)'):
+
+def get_dual_time_str(include_seconds=False):
+    now_utc = datetime.now(timezone.utc)
     bj_tz = timezone(timedelta(hours=8))
-    return datetime.now(bj_tz).strftime(fmt)
+    now_bj = datetime.now(bj_tz)
+    fmt = "%Y-%m-%d %H:%M:%S" if include_seconds else "%Y-%m-%d %H:%M"
+    bj_str = now_bj.strftime(fmt)
+    utc_str = now_utc.strftime(fmt)
+    return f"`{bj_str} (北京时间 / UTC+8)` · `[{utc_str} (GitHub Actions 宿主原生 UTC 时区)]`"
 
 def format_badge(latency_ms, code):
     if code in ['ERR', None] or latency_ms < 0:
@@ -347,11 +353,11 @@ def update_readme_table(mainland_data, proxy_data, engine_name):
         print("Marker not found in README.md, skip update.")
         return False
         
-    bj_time = get_bj_time_str('%Y-%m-%d %H:%M (北京时间)')
+    dual_time = get_dual_time_str(False)
     
     new_section = f"""## 🧭 各漫画源最佳线路与网络推荐指南 (Recommended Lines)
 
-> 🕒 **实测数据更新时间**：`{bj_time}`  
+> 🕒 **实测数据更新时间**：{dual_time}  
 > 🌐 **双网络实测节点**：**中国大陆直连**（{engine_name}） vs **海外代理网络**（低延迟高速节点）  
 > 📏 **延迟判定标准**：`<500ms` 🟢 **秒开/极速** ｜ `500~1500ms` 🟢 **良好/正常** ｜ `1500~3500ms` 🟡 **可用/偏慢** ｜ `>3500ms` 🟡 **高延迟** ｜ ❌ **阻断**
 
@@ -382,7 +388,7 @@ def generate_step_summary(mainland_data, proxy_data, engine_name, alert_msg=None
     if not summary_file:
         return
     md = f"# 🩺 VeneraX 漫画源自动化探活报告\n\n"
-    md += f"- **测速时间**：`{get_bj_time_str('%Y-%m-%d %H:%M:%S (北京时间)')}`\n"
+    md += f"- **测速时间**：{get_dual_time_str(True)}\n"
     md += f"- **大陆直连引擎**：`{engine_name}`\n"
     md += f"- **海外代理节点**：`GitHub Actions Runner (Overseas)`\n\n"
     
@@ -420,7 +426,7 @@ def main():
         # Both engines failed! Trigger alert
         print("\n🚨 [致命异常] 阿里云主引擎与 Globalping 备用引擎均未能获取国内数据！")
         alert_body = "## 🚨 [VeneraX 探活报警] 大陆双探活引擎全部失效！\n\n"
-        alert_body += "- **检测时间**：`" + get_bj_time_str('%Y-%m-%d %H:%M:%S (北京时间)') + "`\n"
+        alert_body += f"- **检测时间**：{get_dual_time_str(True)}\n"
         alert_body += "- **故障现象**：阿里云 SSH 探针连接失败，且 Globalping 备用公共探针无响应。\n"
         alert_body += "- **安全措施**：工作流已终止更新，README 现有数据已完整保留。\n"
         alert_body += "\n请检查阿里云 VPS 状态 (`8.163.60.144`) 或 GitHub Secrets 配置。"

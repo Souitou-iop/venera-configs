@@ -26,6 +26,16 @@ def fetch_json(url, timeout=6):
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode('utf-8'))
 
+
+def get_dual_time_str(include_seconds=False):
+    now_utc = datetime.now(timezone.utc)
+    bj_tz = timezone(timedelta(hours=8))
+    now_bj = datetime.now(bj_tz)
+    fmt = "%Y-%m-%d %H:%M:%S" if include_seconds else "%Y-%m-%d %H:%M"
+    bj_str = now_bj.strftime(fmt)
+    utc_str = now_utc.strftime(fmt)
+    return f"`{bj_str} (北京时间 / UTC+8)` · `[{utc_str} (GitHub Actions 宿主原生 UTC 时区)]`"
+
 def parse_semver(ver):
     try:
         parts = [int(x) for x in ver.split('-')[0].split('.')]
@@ -100,10 +110,10 @@ def main():
                     
     # Generate Markdown Report
     has_updates = bool(new_sources or version_bumps)
-    date_str = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S (北京时间)')
+    date_str = get_dual_time_str(True)
     
     md = f"## 🔍 社区漫画源更新巡检报告\n\n"
-    md += f"**巡检时间**：`{date_str}`\n\n"
+    md += f"**巡检时间**：{date_str}\n\n"
     
     if not has_updates:
         md += "🎉 **当前仓库收录的所有漫画源均为全网最新版本，未发现新源或更高版本更新。**\n"
