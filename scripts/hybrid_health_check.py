@@ -266,7 +266,7 @@ def probe_mainland_primary_ssh(host, key_content, user="probe-runner"):
             for k, v in data.get('results', {}).items():
                 parsed[k] = {'latency': v.get('latency_ms', -1), 'code': v.get('code', 'ERR')}
             print("  ✅ 私有沙盒节点探测成功并回传数据！")
-            return parsed, "国内直连骨干节点"
+            return parsed, "中国大陆骨干网节点"
         else:
             print(f"  ⚠️ 私有探针返回非预期结果: {res.stderr[:200]}")
             return None, None
