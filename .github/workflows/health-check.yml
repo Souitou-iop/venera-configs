@@ -31,7 +31,7 @@ jobs:
         id: run_probe
         env:
           PROBE_SSH_KEY: ${{ secrets.PROBE_SSH_KEY }}
-          PROBE_HOST: ${{ secrets.PROBE_HOST || '8.163.60.144' }}
+          PROBE_HOST: ${{ secrets.PROBE_HOST }}
           PROBE_USER: ${{ secrets.PROBE_USER || 'probe-runner' }}
         run: |
           python scripts/hybrid_health_check.py

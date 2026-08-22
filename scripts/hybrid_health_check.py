@@ -245,7 +245,7 @@ def probe_local_proxy():
     return results
 
 def probe_mainland_primary_ssh(host, key_content, user="probe-runner"):
-    print(f"\n🚀 尝试 [主引擎：阿里云受限沙盒] (Host: {host})...")
+    print(f"\n🚀 尝试 [主引擎：私有受限沙盒探针]...")
     key_path = "/tmp/alicloud_probe_key"
     with open(key_path, "w") as f:
         f.write(key_content.strip() + "\n")
@@ -260,18 +260,18 @@ def probe_mainland_primary_ssh(host, key_content, user="probe-runner"):
     ]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
-        if res.returncode == 0 and "CN-Guangzhou-AliCloud-BGP" in res.stdout:
+        if res.returncode == 0 and "CN-Mainland-Direct" in res.stdout:
             data = json.loads(res.stdout.strip().split("\n")[-1])
             parsed = {}
             for k, v in data.get('results', {}).items():
                 parsed[k] = {'latency': v.get('latency_ms', -1), 'code': v.get('code', 'ERR')}
-            print("  ✅ 阿里云沙盒节点探测成功并回传数据！")
-            return parsed, "阿里云广州 BGP 骨干网"
+            print("  ✅ 私有沙盒节点探测成功并回传数据！")
+            return parsed, "国内直连骨干节点"
         else:
-            print(f"  ⚠️ 阿里云 SSH 探针返回非预期结果: {res.stderr[:200]}")
+            print(f"  ⚠️ 私有探针返回非预期结果: {res.stderr[:200]}")
             return None, None
     except Exception as e:
-        print(f"  ⚠️ 阿里云主引擎连接失败 ({e})，准备故障转移到备用引擎...")
+        print(f"  ⚠️ 私有主引擎连接失败 ({e})，准备故障转移到备用引擎...")
         return None, None
     finally:
         if os.path.exists(key_path):
@@ -410,13 +410,13 @@ def main():
     
     # Check for SSH secret
     ssh_key = os.environ.get('PROBE_SSH_KEY')
-    ssh_host = os.environ.get('PROBE_HOST', '8.163.60.144')
+    ssh_host = os.environ.get('PROBE_HOST')
     ssh_user = os.environ.get('PROBE_USER', 'probe-runner')
     
     mainland_results = None
     engine_name = None
     
-    if ssh_key:
+    if ssh_key and ssh_host:
         mainland_results, engine_name = probe_mainland_primary_ssh(ssh_host, ssh_key, ssh_user)
         
     if not mainland_results:
@@ -424,12 +424,12 @@ def main():
         
     if not mainland_results:
         # Both engines failed! Trigger alert
-        print("\n🚨 [致命异常] 阿里云主引擎与 Globalping 备用引擎均未能获取国内数据！")
+        print("\n🚨 [致命异常] 主引擎与备用引擎均未能获取国内数据！")
         alert_body = "## 🚨 [VeneraX 探活报警] 大陆双探活引擎全部失效！\n\n"
         alert_body += f"- **检测时间**：{get_dual_time_str(True)}\n"
-        alert_body += "- **故障现象**：阿里云 SSH 探针连接失败，且 Globalping 备用公共探针无响应。\n"
+        alert_body += "- **故障现象**：私有 SSH 探针连接失败，且 Globalping 备用公共探针无响应。\n"
         alert_body += "- **安全措施**：工作流已终止更新，README 现有数据已完整保留。\n"
-        alert_body += "\n请检查阿里云 VPS 状态 (`8.163.60.144`) 或 GitHub Secrets 配置。"
+        alert_body += "\n请检查私有探针服务器状态或 GitHub Secrets 配置。"
         with open('/tmp/health_check_alert.md', 'w', encoding='utf-8') as f:
             f.write(alert_body)
         with open('/tmp/has_alert.txt', 'w') as f:
