@@ -9,6 +9,7 @@ import os
 import sys
 import urllib.request
 import time
+from datetime import datetime, timezone, timedelta
 
 TRACKED_REPOSITORIES = [
     ('senran-N/venera-configs', 'senran-N (禁漫/Hitomi/拷贝增强)'),
@@ -99,7 +100,7 @@ def main():
                     
     # Generate Markdown Report
     has_updates = bool(new_sources or version_bumps)
-    date_str = time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())
+    date_str = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S (北京时间)')
     
     md = f"## 🔍 社区漫画源更新巡检报告\n\n"
     md += f"**巡检时间**：`{date_str}`\n\n"

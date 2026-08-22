@@ -12,6 +12,7 @@ import time
 import hmac
 import hashlib
 import uuid
+from datetime import datetime, timezone, timedelta
 
 def get_pica_headers():
     path = "init"
@@ -108,7 +109,9 @@ def main():
         
     # Generate summary markdown table
     md = "# 🩺 漫画源实时健康探活报告 (Source Health Report)\n\n"
-    md += f"最后检测时间：`{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}`\n\n"
+    bj_now = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S (北京时间)')
+    md += f"最后检测时间：`{bj_now}`\n\n"
+
     md += "| 漫画源 | Key | 脚本版本 | 运行状态 | HTTP状态码 | 响应延迟 |\n"
     md += "| :--- | :--- | :---: | :---: | :---: | :---: |\n"
     

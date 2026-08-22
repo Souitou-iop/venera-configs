@@ -15,6 +15,7 @@ import hmac
 import hashlib
 import uuid
 import re
+from datetime import datetime, timezone, timedelta
 
 # Sources configurations for direct benchmarking
 PROBES = {
@@ -182,6 +183,11 @@ def get_pica_headers():
         "http_client": "dart:io"
     }
 
+
+def get_bj_time_str(fmt='%Y-%m-%d %H:%M (北京时间)'):
+    bj_tz = timezone(timedelta(hours=8))
+    return datetime.now(bj_tz).strftime(fmt)
+
 def format_badge(latency_ms, code):
     if code in ['ERR', None] or latency_ms < 0:
         return '❌ **无法直连** (阻断)'
@@ -341,7 +347,7 @@ def update_readme_table(mainland_data, proxy_data, engine_name):
         print("Marker not found in README.md, skip update.")
         return False
         
-    bj_time = time.strftime('%Y-%m-%d %H:%M (北京时间)', time.localtime(time.time()))
+    bj_time = get_bj_time_str('%Y-%m-%d %H:%M (北京时间)')
     
     new_section = f"""## 🧭 各漫画源最佳线路与网络推荐指南 (Recommended Lines)
 
@@ -376,7 +382,7 @@ def generate_step_summary(mainland_data, proxy_data, engine_name, alert_msg=None
     if not summary_file:
         return
     md = f"# 🩺 VeneraX 漫画源自动化探活报告\n\n"
-    md += f"- **测速时间**：`{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}`\n"
+    md += f"- **测速时间**：`{get_bj_time_str('%Y-%m-%d %H:%M:%S (北京时间)')}`\n"
     md += f"- **大陆直连引擎**：`{engine_name}`\n"
     md += f"- **海外代理节点**：`GitHub Actions Runner (Overseas)`\n\n"
     
@@ -414,7 +420,7 @@ def main():
         # Both engines failed! Trigger alert
         print("\n🚨 [致命异常] 阿里云主引擎与 Globalping 备用引擎均未能获取国内数据！")
         alert_body = "## 🚨 [VeneraX 探活报警] 大陆双探活引擎全部失效！\n\n"
-        alert_body += "- **检测时间**：`" + time.strftime('%Y-%m-%d %H:%M:%S UTC') + "`\n"
+        alert_body += "- **检测时间**：`" + get_bj_time_str('%Y-%m-%d %H:%M:%S (北京时间)') + "`\n"
         alert_body += "- **故障现象**：阿里云 SSH 探针连接失败，且 Globalping 备用公共探针无响应。\n"
         alert_body += "- **安全措施**：工作流已终止更新，README 现有数据已完整保留。\n"
         alert_body += "\n请检查阿里云 VPS 状态 (`8.163.60.144`) 或 GitHub Secrets 配置。"
